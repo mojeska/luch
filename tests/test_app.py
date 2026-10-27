@@ -1,0 +1,28 @@
+from luch.app import LuchApp
+from luch.radio import Channel, Contact, RadioState
+
+
+async def test_offline_ui_renders_and_receives(tmp_path):
+    app = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with app.run_test(size=(140, 40)) as pilot:
+        state = RadioState(connected=True, name="Mojeska", freq=927.875, bw=62.5, sf=7, tx_power=22,
+                           battery_mv=4012, channels=[Channel(0, "Public"), Channel(1, "#test")],
+                           contacts=[Contact("ab" * 32, "Ivan", 1, 0, 2), Contact("cd" * 32, "Hilltop", 2, 0, 1)])
+        app.on_radio("state", state)
+        mid = app.store.add("chan:0", "in", "Ivan", "приём, как слышно?", 1_700_000_000, snr=6.5, path_len=2)
+        app.on_radio("message", mid)
+        mid2 = app.store.add("chan:1", "in", "Olga", "test one two", 1_700_000_100, snr=-3.0, path_len=-1)
+        app.on_radio("message", mid2)
+        app.on_radio("message", app.store.add("dm:" + "ab" * 6, "in", "Ivan", "private", 1_700_000_200))
+        await pilot.pause()
+        assert app.current == "chan:0"
+        assert app.store.unread("chan:0") == 0  # shown, so read
+        assert app.store.unread("chan:1") == 1
+        labels = [label for _, label in app.convs]
+        assert labels[:2] == ["К-00 PUBLIC", "К-01 #TEST"]
+        assert any("IVAN" in label for label in labels)
+        assert not any("HILLTOP" in label for label in labels)  # repeaters stay out of the list
+        assert not any("OLGA" in label for label in labels)  # no contact entry without traffic
+        await pilot.press(*"/dm hill", "enter")  # repeaters can't be opened
+        assert app.current == "chan:0"
+        app.save_screenshot(str(tmp_path / "shot.svg"))

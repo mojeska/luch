@@ -1,0 +1,74 @@
+/* ЛУЧ: amber phosphor on black, red accents, double-line panels */
+Screen {
+    background: #0b0d0a;
+    color: #ffb000;
+}
+#header {
+    height: 1;
+    background: #16140c;
+}
+#footer {
+    height: 1;
+    background: #16140c;
+}
+#body {
+    height: 1fr;
+}
+#left {
+    width: 30;
+}
+#right {
+    width: 32;
+}
+#center {
+    width: 1fr;
+}
+OptionList, RichLog, #status, #events {
+    background: #0b0d0a;
+    border: double #6b5a22;
+    border-title-color: #ffb000;
+    border-title-style: bold;
+    border-subtitle-color: #6b5a22;
+    scrollbar-color: #6b5a22;
+    scrollbar-background: #0b0d0a;
+}
+OptionList:focus, RichLog:focus {
+    border: double #ffb000;
+}
+#convs {
+    height: 1fr;
+}
+OptionList > .option-list--option-highlighted {
+    background: #3a2f0c;
+}
+OptionList:focus > .option-list--option-highlighted {
+    background: #6b5a22;
+}
+#log {
+    height: 1fr;
+    padding: 0 1;
+}
+#status {
+    height: auto;
+    padding: 0 1;
+}
+#events {
+    height: 1fr;
+    padding: 0 1;
+}
+Input {
+    background: #0b0d0a;
+    color: #ffb000;
+    border: double #c8261e;
+    border-title-color: #c8261e;
+}
+Input:focus {
+    border: double #ff4a3d;
+}
+Input > .input--placeholder {
+    color: #5f5532;
+}
+Input > .input--cursor {
+    background: #ffb000;
+    color: #0b0d0a;
+}
