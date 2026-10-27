@@ -126,7 +126,8 @@ async def test_ctrl_o_collapses_the_conversation_list(tmp_path):
         await pilot.press("ctrl+o")
         await pilot.pause()
         assert not app.query_one("#left").display
-        assert log.region.width >= wide_before + 30  # the list's width goes to the log
+        assert log.region.width >= wide_before + 27  # the list's width (less a 3-column strip) goes to the log
+        assert app.query_one("#left-strip").display
         assert app.query_one("#tx", Input).has_focus  # not stuck on a hidden list
         await pilot.press("ctrl+n")  # still switch conversations without it
         assert app.current == "chan:1"
@@ -148,11 +149,85 @@ async def test_ctrl_g_collapses_the_gauges_panel(tmp_path):
         await pilot.press("ctrl+g")
         await pilot.pause()
         assert not app.query_one("#right").display
-        assert log.region.width >= wide_before + 32
-        await pilot.press("ctrl+o")  # both hidden: the log has the whole width
+        assert log.region.width >= wide_before + 29
+        await pilot.press("ctrl+o")  # both collapsed: the log has all but the two strips
         await pilot.pause()
-        assert log.region.width == app.size.width
+        assert log.region.width == app.size.width - 6
 
     again = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
     async with again.run_test(size=(100, 40)):
         assert not again.query_one("#right").display and not again.query_one("#left").display
+
+
+
+def _click_spot(app, frame_id, button):
+    """Screen position of a panel's [−] or [+] in its top border."""
+    w = app.query_one(frame_id)
+    row = app.screen._compositor.render_strips()[w.region.y].text
+    x = row.index(button, w.region.x, w.region.right)
+    return x + 1, w.region.y
+
+
+async def test_corner_buttons_fold_collapse_and_maximize(tmp_path):
+    from textual.widgets import Input
+    app = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.on_radio("state", RadioState(connected=True, name="Mojeska",
+                                         channels=[Channel(0, "Public"), Channel(1, "#test")]))
+        await pilot.pause()
+        await pilot.pause()
+
+        # [+] on the log: log and command line fill the screen; Esc puts it back.
+        await pilot.click(offset=_click_spot(app, "#log", "[+]"))
+        await pilot.pause()
+        assert app.screen.maximized is app.query_one("#center")
+        assert app.query_one("#tx", Input).has_focus
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen.maximized is None
+
+        # [−] on status folds it to its title line; [+] opens it again.
+        await pilot.click(offset=_click_spot(app, "#status", "[−]"))
+        await pilot.pause()
+        status = app.query_one("#status")
+        assert status.has_class("-folded") and status.region.height == 1
+        assert app.settings["folded"] == ["status"]
+        await pilot.click(offset=_click_spot(app, "#status", "[+]"))
+        await pilot.pause()
+        assert not status.has_class("-folded") and status.region.height > 1
+
+        # [−] on the list collapses its column to a strip; clicking the strip brings it back.
+        await pilot.click(offset=_click_spot(app, "#convs", "[−]"))
+        await pilot.pause()
+        assert not app.query_one("#left").display and app.query_one("#left-strip").display
+        await pilot.click("#left-strip")
+        await pilot.pause()
+        assert app.query_one("#left").display and not app.query_one("#left-strip").display
+
+        # A maximized list goes back to normal once a conversation is picked.
+        await pilot.click(offset=_click_spot(app, "#convs", "[+]"))
+        await pilot.pause()
+        assert app.screen.maximized is app.query_one("#convs")
+        convs = app.query_one("#convs")
+        convs.highlighted = convs.get_option_index("chan:1")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen.maximized is None and app.current == "chan:1"
+
+        app.action_frame("events", "min")
+    again = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with again.run_test(size=(120, 40)):
+        assert again.query_one("#events").has_class("-folded")  # remembered
+
+
+async def test_titles_keep_their_buttons_when_narrow(tmp_path):
+    app = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with app.run_test(size=(80, 30)) as pilot:
+        app.on_radio("state", RadioState(connected=True, name="Mojeska",
+                                         channels=[Channel(0, "A very long channel name [x] indeed")]))
+        await pilot.pause()
+        await pilot.pause()
+        rows = app.screen._compositor.render_strips()
+        for wid in ("#convs", "#log", "#status"):
+            w = app.query_one(wid)
+            assert "[+]" in rows[w.region.y].text[w.region.x:w.region.right], wid

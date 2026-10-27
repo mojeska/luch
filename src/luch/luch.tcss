@@ -116,3 +116,22 @@ Input > .input--cursor {
     border-subtitle-color: #6b5a22;
     padding: 0 1;
 }
+
+/* Collapsed side column: a narrow bar, click to bring it back */
+.strip {
+    width: 3;
+    height: 1fr;
+    display: none;
+    background: #0b0d0a;
+    border: double #6b5a22;
+}
+.strip:hover {
+    border: double #ffb000;
+}
+/* Folded panel: only its title line */
+.-folded {
+    height: 1 !important;
+    min-height: 1;
+    border-bottom: none !important;
+    overflow: hidden hidden;
+}

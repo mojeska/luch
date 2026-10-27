@@ -196,8 +196,9 @@ Host radio-host
 | `/reboot` | Restart the radio; LUCH reconnects |
 | `/firmware` | Radio firmware vs the newest MeshCore Companion release |
 | **Ctrl+T** | **Yankee mode:** Russian / English screen text |
-| Ctrl+O | Hide / show the channels and contacts list, so the comms log gets the width (remembered; Ctrl+N / Ctrl+P still switch) |
-| Ctrl+G | Hide / show the status, Misha and events panel, for the same reason (remembered) |
+| Ctrl+O | Collapse the channels and contacts list to a narrow strip, so the comms log gets the width; again or a click on the strip restores it (remembered; Ctrl+N / Ctrl+P still switch) |
+| Ctrl+G | Same for the status, Misha and events column |
+| `[−]` `[+]` in a panel's top-right corner | Click `[+]` to maximize the panel (the comms log keeps the command line); `[−]` or Esc restores. `[−]` on the list collapses it to a strip; on status, Misha or events it folds that panel to its title line, and `[+]` opens it again (remembered) |
 | Ctrl+B | Show / hide Misha |
 | Ctrl+S, `/mute`, `/unmute` | Sound effects off / on (remembered) |
 | Ctrl+K, `/ticker` | Slogan ticker on / off (remembered) |

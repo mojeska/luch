@@ -11,11 +11,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from rich.cells import cell_len, set_cell_size
 from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.markup import escape as escape_markup
 from textual.widgets import Button, Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 
@@ -69,8 +71,9 @@ HELP = [
     "  Tab / Shift+Tab     move between panels",
     "  Ctrl+N / Ctrl+P     next / previous conversation",
     "  Ctrl+T              Russian / English screen text",
-    "  Ctrl+O              hide / show the channels and contacts list (more room for the log)",
-    "  Ctrl+G              hide / show the status, Misha and events panel (more room for the log)",
+    "  Ctrl+O              collapse / restore the channels and contacts list (more room for the log)",
+    "  Ctrl+G              collapse / restore the status, Misha and events column",
+    "  [−] [+] on a panel  click: fold or collapse it / maximize it; Esc or [−] restores",
     "  Ctrl+B              show / hide Misha",
     "  Ctrl+S  or /mute    sound effects on / off",
     "  Ctrl+K  or /ticker  slogan ticker on / off",
@@ -98,6 +101,28 @@ class Header(Static):
         t.append("  //  MESH RADIO TERMINAL", style="#8a7a4a")
         t.append(f"    {tt('МЕСТН')} {now:%H:%M:%S}   UTC {utc:%H:%M:%S}  ", style="#ffb000")
         self.update(t)
+
+
+# Panels with [−] / [+] in the top-right corner, and what "−" does to each:
+# "strip" shrinks its whole column to a narrow bar, "fold" leaves just the title line, None has no "−".
+FRAMES = {"convs": "strip", "log": None, "status": "fold", "mascot": "fold", "events": "fold"}
+BORDER, BORDER_FOCUS = "#6b5a22", "#ffb000"
+
+
+class Pane(Vertical):
+    """The comms log plus the command line: maximized together, so you can still type."""
+    ALLOW_MAXIMIZE = True
+
+
+class SideStrip(Static):
+    """A collapsed side column. Click anywhere on it to bring the column back."""
+
+    def __init__(self, column: str, **kw):
+        super().__init__(**kw)
+        self.column = column
+
+    def on_click(self) -> None:
+        self.app.set_column(self.column, True)
 
 
 class LuchApp(App):
@@ -151,6 +176,8 @@ class LuchApp(App):
         self._count_timer = None
         self._was_connected: bool | None = None
         self._reply_targets: list[tuple[str, str]] = []  # (conv, sender) behind each clickable name
+        self._titles: dict[str, str] = {}  # panel id -> its title, before the corner buttons go on
+        self._folded: set[str] = set()
         self.weather_cache = WeatherCache()
         self.weather = None
         self._weather_err = ""
@@ -191,9 +218,10 @@ class LuchApp(App):
     def compose(self) -> ComposeResult:
         yield Header(id="header")
         with Horizontal(id="body"):
+            yield SideStrip("left", id="left-strip", classes="strip")
             with Vertical(id="left"):
                 yield OptionList(id="convs")
-            with Vertical(id="center"):
+            with Pane(id="center"):
                 yield RichLog(id="log", wrap=True, markup=False, highlight=False)
                 yield Input(id="tx")
                 yield Countdown(id="countdown")
@@ -201,6 +229,7 @@ class LuchApp(App):
                 yield Static(id="status")
                 yield Mascot(id="mascot")
                 yield Static(id="events")
+            yield SideStrip("right", id="right-strip", classes="strip")
         yield Ticker(id="ticker")
         with Horizontal(id="footerbar"):
             yield Static(id="footer")
@@ -211,8 +240,10 @@ class LuchApp(App):
         for wid, title, subt in (("#convs", "КАНАЛЫ И АБОНЕНТЫ", "CHANNELS · CONTACTS"),
                                  ("#status", "СОСТОЯНИЕ", "STATUS"), ("#events", "СОБЫТИЯ", "EVENTS"),
                                  ("#mascot", "МИША", "MASCOT")):
-            w = self.query_one(wid)
-            w.border_title, w.border_subtitle = t(title), sub(subt)
+            self.set_title(wid[1:], t(title))
+            self.query_one(wid).border_subtitle = sub(subt)
+        for strip, label in (("#left-strip", "СПИСОК"), ("#right-strip", "ПРИБОРЫ")):
+            self.query_one(strip, Static).update(Text("+\n\n" + "\n".join(t(label)), style="bold #ffb000"))
         self.query_one("#tx", Input).placeholder = t("ПЕРЕДАЧА ▸") + "  type and press Enter  ·  /help"
         key, lab = "bold #0b0d0a on #ffb000", "#ffb000"
         self.query_one("#footer", Static).update(Text.assemble(
@@ -231,10 +262,16 @@ class LuchApp(App):
             self.query_one(Mascot).display = False
         if self.settings.get("ticker") is False:
             self.query_one(Ticker).display = False
-        if self.settings.get("convs") is False:
-            self.query_one("#left").display = False
-        if self.settings.get("gauges") is False:
-            self.query_one("#right").display = False
+        for wid in ("#status", "#mascot", "#events"):  # not focusable, so Textual wouldn't maximize them
+            self.query_one(wid).ALLOW_MAXIMIZE = True
+        for key in self.settings.get("folded", []):
+            if FRAMES.get(key) == "fold":
+                self._folded.add(key)
+                self.query_one("#" + key).add_class("-folded")
+        self.set_column("left", self.settings.get("convs") is not False, save=False)
+        self.set_column("right", self.settings.get("gauges") is not False, save=False)
+        self.watch(self.screen, "maximized", lambda _: self.call_after_refresh(self.render_titles), init=False)
+        self.watch(self.screen, "focused", lambda _: self.render_titles(), init=False)
         self.apply_labels()
         self.rebuild_convs()
         self.render_status()
@@ -366,6 +403,7 @@ class LuchApp(App):
     def on_resize(self) -> None:
         if self._count > 0:
             self.query_one(Countdown).place()
+        self.call_after_refresh(self.render_titles)
 
     def _start_anthem(self) -> None:  # worker thread: the first run renders the WAV
         if self.sound.play_anthem():
@@ -376,7 +414,9 @@ class LuchApp(App):
         self.apply_labels()
 
     def action_stop_anthem(self) -> None:
-        if self._count > 0:
+        if self.screen.maximized is not None:  # Esc first restores a maximized panel
+            self.screen.minimize()
+        elif self._count > 0:
             self._end_countdown()
             self.event("ОТМЕНА")
             self._anthem_done()
@@ -404,21 +444,83 @@ class LuchApp(App):
         if tk.display:
             tk.rebuild()
 
+    # ---------------------------------------------------------------- panels: collapse, fold, maximize
     def action_toggle_convs(self) -> None:
-        """Hide the channels and contacts list so the comms log gets its width. Ctrl+N/P still switch."""
-        self._toggle_panel("#left", "convs")
+        """Collapse the channels and contacts list to a strip so the log gets its width. Ctrl+N/P still switch."""
+        self.set_column("left", not self.query_one("#left").display)
 
     def action_toggle_gauges(self) -> None:
-        """Hide the status / Misha / events panel so the comms log gets its width."""
-        self._toggle_panel("#right", "gauges")
+        """Collapse the status / Misha / events column to a strip so the log gets its width."""
+        self.set_column("right", not self.query_one("#right").display)
 
-    def _toggle_panel(self, selector: str, setting: str) -> None:
-        panel = self.query_one(selector)
-        panel.display = not panel.display
-        self.settings[setting] = bool(panel.display)
-        self._save_settings()
-        if not panel.display and self.focused and panel in self.focused.ancestors_with_self:
+    def set_column(self, column: str, shown: bool, save: bool = True) -> None:
+        panel = self.query_one("#" + column)
+        if self.screen.maximized is not None and not shown:
+            self.screen.minimize()
+        panel.display = shown
+        self.query_one(f"#{column}-strip").display = not shown
+        if save:
+            self.settings["convs" if column == "left" else "gauges"] = shown
+            self._save_settings()
+        if not shown and self.focused and panel in self.focused.ancestors_with_self:
             self.query_one("#tx", Input).focus()  # don't leave the cursor on a hidden panel
+        self.call_after_refresh(self.render_titles)
+
+    def action_frame(self, key: str, op: str) -> None:
+        """A click on a panel's [−] or [+]."""
+        if op == "max":
+            target = self.query_one("#center") if key == "log" else self.query_one("#" + key)
+            if self.screen.maximized is not None:
+                self.screen.minimize()
+            self.screen.maximize(target, container=False)
+            if key == "log":
+                self.query_one("#tx", Input).focus()
+            elif key == "convs":
+                self.query_one("#convs").focus()
+        elif op == "restore":
+            self.screen.minimize()
+        elif op == "min" and FRAMES.get(key) == "strip":
+            self.set_column("left", False)
+        elif op in ("min", "unfold") and FRAMES.get(key) == "fold":
+            folding = op == "min"
+            (self._folded.add if folding else self._folded.discard)(key)
+            self.query_one("#" + key).set_class(folding, "-folded")
+            self.settings["folded"] = sorted(self._folded)
+            self._save_settings()
+        self.call_after_refresh(self.render_titles)
+
+    def set_title(self, key: str, title: str) -> None:
+        self._titles[key] = title
+        self.render_titles(key)
+
+    def render_titles(self, only: str | None = None) -> None:
+        """Each panel's title with its buttons pushed to the top-right corner by border characters."""
+        maxed = self.screen.maximized
+        for key, minimize in FRAMES.items():
+            if only and key != only:
+                continue
+            w = self.query_one("#" + key)
+            target = self.query_one("#center") if key == "log" else w
+            if maxed is not None and maxed is target:
+                buttons = [("−", "restore")]
+            elif key in self._folded:
+                buttons = [("+", "unfold")]
+            else:
+                buttons = ([("−", "min")] if minimize else []) + [("+", "max")]
+            title = self._titles.get(key, "")
+            room = w.outer_size.width - 6  # Textual draws "╔═ " + title + " ═╗"
+            fill = room - cell_len(title) - 1 - 3 * len(buttons)
+            if fill < 0 and room > 3 * len(buttons) + 1:
+                title = set_cell_size(title, room - 3 * len(buttons) - 2) + "…"
+                fill = 0
+            colour = BORDER_FOCUS if w.has_focus else BORDER
+            btns = "".join(f"[@click=app.frame('{key}','{op}')]\\[{sym}][/]" for sym, op in buttons)
+            w.border_title = (f"{escape_markup(title)} [{colour}]{'═' * max(fill, 0)}[/]{btns}" if room > 0
+                              else escape_markup(title))
+
+    def on_option_list_option_selected(self, ev: OptionList.OptionSelected) -> None:
+        if self.screen.maximized is self.query_one("#convs"):  # picked one from the full-screen list
+            self.screen.minimize()
 
     def action_toggle_mascot(self) -> None:
         m = self.query_one(Mascot)
@@ -554,9 +656,9 @@ class LuchApp(App):
         self.searching = False
         log = self.query_one("#log", RichLog)
         log.clear()
-        log.border_title = f"{self.t('ЖУРНАЛ СВЯЗИ')} · {self.label_of(conv)}"
+        self.set_title("log", f"{self.t('ЖУРНАЛ СВЯЗИ')} · {self.label_of(conv)}")
         tags = self.store.tags_for(conv)
-        log.border_subtitle = ("#" + " #".join(tags)) if tags else subtitle("COMMS LOG", self.lang)
+        log.border_subtitle = escape_markup("#" + " #".join(tags)) if tags else subtitle("COMMS LOG", self.lang)
         history = self.store.history(conv)
         self._log_empty = not history
         if not history:
@@ -931,7 +1033,7 @@ class LuchApp(App):
         self.searching = True
         log = self.query_one("#log", RichLog)
         log.clear()
-        log.border_title = f"{self.t('ПОИСК')} · {needle}"
+        self.set_title("log", f"{self.t('ПОИСК')} · {needle}")
         log.border_subtitle = "SEARCH · pick a conversation to leave"
         hits = self.store.search(needle)
         if not hits:
