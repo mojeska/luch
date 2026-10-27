@@ -94,7 +94,15 @@ sudo systemctl enable --now bluetooth
 sudo usermod -aG uucp $USER     # USB serial (/dev/ttyUSB*, /dev/ttyACM*); log out and back in
 ```
 
-Pair the radio once before the first Bluetooth connect (it asks for the PIN shown on the radio's screen).
+The radio has to be paired once, with the 6-digit PIN shown on its screen. Pass it with `--pin` on the first Bluetooth connect and LUCH answers the pairing request itself (Linux usually has no program to ask you for it):
+
+```sh
+.venv/bin/luch -d MeshCore-MyNode --pin 123456
+```
+
+After that it's paired and `--pin` isn't needed. `luch service install -d MeshCore-MyNode --pin 123456` passes it to the logger too. On macOS, leave `--pin` off: the system asks for the PIN in a dialog.
+
+Or pair by hand with `bluetoothctl`:
 
 ```sh
 bluetoothctl

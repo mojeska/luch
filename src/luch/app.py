@@ -20,6 +20,7 @@ from .daemon import default_socket_path, run_daemon, socket_alive
 from .radio import CONTACT_REPEATER, CONTACT_ROOM, CONTACT_SENSOR, Radio, RadioState
 from .remote import RemoteRadio
 from . import firmware, service
+from .blepair import valid_pin
 from .i18n import subtitle, tr
 from .countdown import Countdown
 from .mascot import Mascot
@@ -108,14 +109,15 @@ class LuchApp(App):
     ]
 
     def __init__(self, device: str, db_path: Path, offline: bool = False,
-                 port: str | None = None, via_logger: bool = False, tcp: str | None = None):
+                 port: str | None = None, via_logger: bool = False, tcp: str | None = None,
+                 pin: str | None = None):
         super().__init__()
         self.store = Store(db_path)
         self.via_logger = via_logger
         if via_logger:
             self.radio = RemoteRadio(default_socket_path(db_path), self.on_radio)
         else:
-            self.radio = Radio(device, self.store, self.on_radio, port=port, tcp=tcp)
+            self.radio = Radio(device, self.store, self.on_radio, port=port, tcp=tcp, pin=pin)
         self.offline = offline
         self.state = RadioState()
         self.current: str | None = None
@@ -897,7 +899,8 @@ async def wifi_setup(args) -> None:
     if await socket_alive(default_socket_path(db)):
         radio = RemoteRadio(default_socket_path(db), lambda k, d: None)
     else:
-        radio = Radio(args.device or DEFAULT_DEVICE, Store(db), lambda k, d: None, port=args.port, tcp=args.tcp)
+        radio = Radio(args.device or DEFAULT_DEVICE, Store(db), lambda k, d: None, port=args.port, tcp=args.tcp,
+                      pin=args.pin)
     task = asyncio.create_task(radio.run())
     for _ in range(60):
         if radio.state.connected:
@@ -925,6 +928,8 @@ def main() -> None:
     link.add_argument("-d", "--device", help="BLE name (or part of it) or address, e.g. MeshCore-Mojeska")
     link.add_argument("--port", help="USB serial port, or 'auto' to find it")
     link.add_argument("--tcp", metavar="HOST[:PORT]", help="radio on Wi-Fi (port 5000 by default)")
+    link.add_argument("--pin", type=valid_pin, help="Bluetooth pairing PIN shown on the radio's screen "
+                      "(Linux; only needed the first time, macOS asks in a dialog)")
     link.add_argument("--radio", help="name for this radio's log (default: from -d, e.g. MeshCore-Mojeska -> mojeska)")
     link.add_argument("--db", type=Path, help="SQLite log (default ~/.local/share/luch/<radio>.db)")
     ap.add_argument("--offline", action="store_true", help="browse the log without connecting")
@@ -960,14 +965,14 @@ def main() -> None:
     device = args.device or DEFAULT_DEVICE
 
     if args.cmd == "logger":
-        run_daemon(device, args.db, args.port, args.tcp)
+        run_daemon(device, args.db, args.port, args.tcp, args.pin)
         return
     if args.cmd == "wifi":
         asyncio.run(wifi_setup(args))
         return
     if args.cmd == "service":
         if args.action == "install":
-            service.install(device, args.db, args.port, args.tcp)
+            service.install(device, args.db, args.port, args.tcp, args.pin)
         else:
             getattr(service, args.action)()
         return
@@ -978,7 +983,8 @@ def main() -> None:
         logging.getLogger().addHandler(logging.NullHandler())  # keep library warnings off the screen
     via_logger = (not args.offline and not args.direct
                   and asyncio.run(socket_alive(default_socket_path(args.db))))
-    app = LuchApp(device, args.db, offline=args.offline, port=args.port, via_logger=via_logger, tcp=args.tcp)
+    app = LuchApp(device, args.db, offline=args.offline, port=args.port, via_logger=via_logger, tcp=args.tcp,
+                  pin=args.pin)
     if args.english:
         app.lang = "en"
     app.run()

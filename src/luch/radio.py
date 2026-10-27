@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from meshcore import EventType, MeshCore
 
+from .blepair import LINUX, pin_agent
 from .store import Store
 
 log = logging.getLogger("luch")
@@ -129,8 +130,9 @@ class Radio:
     """Owns the MeshCore connection. `notify(kind, data)` is called for every change."""
 
     def __init__(self, device: str, store: Store, notify: Callable[[str, Any], None],
-                 port: str | None = None, tcp: str | None = None):
+                 port: str | None = None, tcp: str | None = None, pin: str | None = None):
         self.device = device
+        self.pin = pin    # Bluetooth pairing PIN; only used on Linux (macOS asks in a dialog)
         self.port = port  # USB serial port; "auto" to find one
         self.tcp = tcp    # "host[:port]" for a radio on Wi-Fi. Neither = Bluetooth
         self.store = store
@@ -158,7 +160,10 @@ class Radio:
                     self.mc = await MeshCore.create_serial(port, 115200, default_timeout=10, only_error=True)
                 else:
                     self.notify("status", f"SCANNING FOR {self.device}")
-                    self.mc = await MeshCore.create_ble(address=self.device, default_timeout=10, only_error=True)
+                    pin = self.pin if LINUX else None
+                    async with pin_agent(pin):
+                        self.mc = await MeshCore.create_ble(address=self.device, pin=pin,
+                                                            default_timeout=10, only_error=True)
             except Exception as e:  # bleak and serial raise a variety of errors
                 log.warning("connect failed: %s", e)
                 self.notify("status", str(e).upper()[:60])

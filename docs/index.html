@@ -207,7 +207,7 @@ python3 -m venv .venv &amp;&amp; .venv/bin/pip install -e .
 .venv/bin/luch --port auto                 # USB
 .venv/bin/luch --tcp 192.168.1.50          # Wi-Fi
 .venv/bin/luch service install -d MeshCore-MyNode   # background logger</pre>
-    <p>Arch or Omarchy: <code>sudo pacman -S bluez bluez-utils</code>, pair radio once with <code>bluetoothctl</code>, and add yourself to the <code>uucp</code> group for USB. Full details in the <a href="https://github.com/mojeska/luch#readme">README</a>.</p>
+    <p>Arch or Omarchy: <code>sudo pacman -S bluez bluez-utils</code>, pair radio once with <code>--pin</code> (the PIN on its screen), and add yourself to the <code>uucp</code> group for USB. Full details in the <a href="https://github.com/mojeska/luch#readme">README</a>.</p>
   </div>
 </section>
 
