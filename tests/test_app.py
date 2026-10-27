@@ -31,3 +31,21 @@ async def test_offline_ui_renders_and_receives(tmp_path):
         await pilot.press("ctrl+t")
         assert app.lang == "ru"
         app.save_screenshot(str(tmp_path / "shot.svg"))
+
+
+async def test_mascot_moods(tmp_path):
+    from luch.mascot import Mascot
+    app = LuchApp("x", tmp_path / "t.db", offline=False)
+    app.radio.run = lambda: __import__("asyncio").sleep(0)  # no radio
+    async with app.run_test(size=(140, 44)) as pilot:
+        m = app.query_one(Mascot)
+        app.on_radio("state", RadioState(connected=False))
+        assert m.base == "distress"
+        app.on_radio("state", RadioState(connected=True, battery_mv=3400))
+        assert m.say_key == "battery"
+        app.on_radio("state", RadioState(connected=True, battery_mv=4100, channels=[Channel(0, "Public")]))
+        assert m.base == "idle"
+        app.on_radio("message", app.store.add("chan:0", "in", "Ivan", "hi", 1))
+        assert m.reaction == "wave"
+        await pilot.press("ctrl+b")
+        assert not m.display

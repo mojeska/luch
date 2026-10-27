@@ -21,6 +21,7 @@ from .radio import CONTACT_REPEATER, CONTACT_ROOM, CONTACT_SENSOR, Radio, RadioS
 from .remote import RemoteRadio
 from . import firmware, service
 from .i18n import subtitle, tr
+from .mascot import Mascot
 from .store import Message, Store, default_db_path
 
 DEFAULT_DEVICE = "MeshCore"
@@ -43,6 +44,7 @@ HELP = [
     "  Tab / Shift+Tab     move between panels",
     "  Ctrl+N / Ctrl+P     next / previous conversation",
     "  Ctrl+T              Russian / English screen text",
+    "  Ctrl+B              show / hide Misha",
     "  Ctrl+Q              quit",
 ]
 
@@ -76,6 +78,7 @@ class LuchApp(App):
         Binding("ctrl+n", "cycle(1)", "СЛЕД", show=False),
         Binding("ctrl+p", "cycle(-1)", "ПРЕД", show=False),
         Binding("ctrl+t", "toggle_lang", "ПЕРЕВОД", show=False),
+        Binding("ctrl+b", "toggle_mascot", "МИША", show=False),
     ]
 
     def __init__(self, device: str, db_path: Path, offline: bool = False,
@@ -121,13 +124,15 @@ class LuchApp(App):
                 yield Input(id="tx")
             with Vertical(id="right"):
                 yield Static(id="status")
+                yield Mascot(id="mascot")
                 yield Static(id="events")
         yield Static(id="footer")
 
     def apply_labels(self) -> None:
         t, sub = self.t, lambda s: subtitle(s, self.lang)
         for wid, title, subt in (("#convs", "КАНАЛЫ И АБОНЕНТЫ", "CHANNELS · CONTACTS"),
-                                 ("#status", "СОСТОЯНИЕ", "STATUS"), ("#events", "СОБЫТИЯ", "EVENTS")):
+                                 ("#status", "СОСТОЯНИЕ", "STATUS"), ("#events", "СОБЫТИЯ", "EVENTS"),
+                                 ("#mascot", "МИША", "MASCOT")):
             w = self.query_one(wid)
             w.border_title, w.border_subtitle = t(title), sub(subt)
         self.query_one("#tx", Input).placeholder = t("ПЕРЕДАЧА ▸") + "  type and press Enter  ·  /help"
@@ -140,9 +145,12 @@ class LuchApp(App):
         self.query_one(Header).refresh_clock()
 
     def on_mount(self) -> None:
+        if self.settings.get("mascot") is False:
+            self.query_one(Mascot).display = False
         self.apply_labels()
         self.rebuild_convs()
         self.render_status()
+        self.update_mascot()
         self.event("ПИТАНИЕ ВКЛ · POWER ON")
         if not self.offline:
             self.run_worker(self.radio.run(), exclusive=True, name="radio")
@@ -156,6 +164,7 @@ class LuchApp(App):
             self.state = data
             self.rebuild_convs()
             self.render_status()
+            self.update_mascot()
             if data.firmware and data.firmware != self._fw_for:
                 self._fw_for = data.firmware
                 self.run_worker(self.check_firmware(), name="firmware")
@@ -163,6 +172,7 @@ class LuchApp(App):
             msg = self.store.get(data)
             if not msg:
                 return
+            self.query_one(Mascot).react("wave", 6)
             if msg.conv == self.current and not self.searching:
                 self.write_msg(msg)
                 self.store.mark_read(msg.conv)
@@ -174,6 +184,8 @@ class LuchApp(App):
             self.render_status()
         elif kind == "updated":
             msg = self.store.get(data)
+            if msg and msg.status == "delivered":
+                self.query_one(Mascot).react("point", 4)
             if msg and msg.conv == self.current and not self.searching:
                 self.show_conv(self.current)
 
@@ -188,13 +200,33 @@ class LuchApp(App):
                  for ts, fixed, conv, free in self._events]
         self.query_one("#events", Static).update(Text("\n".join(lines), style="#c9a64a"))
 
-    def action_toggle_lang(self) -> None:
-        self.lang = "en" if self.lang == "ru" else "ru"
-        self.settings["lang"] = self.lang
+    def update_mascot(self) -> None:
+        s, m = self.state, self.query_one(Mascot)
+        if self.offline:
+            m.set_base("idle", "idle")
+        elif not s.connected:
+            m.set_base("distress", "distress")
+        elif s.battery_mv and s.battery_mv < 3500:
+            m.set_base("distress", "battery")
+        else:
+            m.set_base("idle", "idle")
+
+    def action_toggle_mascot(self) -> None:
+        m = self.query_one(Mascot)
+        m.display = not m.display
+        self.settings["mascot"] = bool(m.display)
+        self._save_settings()
+
+    def _save_settings(self) -> None:
         try:
             self.settings_file.write_text(json.dumps(self.settings))
         except OSError:
             pass
+
+    def action_toggle_lang(self) -> None:
+        self.lang = "en" if self.lang == "ru" else "ru"
+        self.settings["lang"] = self.lang
+        self._save_settings()
         self.apply_labels()
         self.rebuild_convs()
         self.render_status()
@@ -417,6 +449,8 @@ class LuchApp(App):
         msg = self.store.get(mid) if mid else None
         if msg:
             self.write_msg(msg)
+            if msg.status == "sent":
+                self.query_one(Mascot).react("point", 3, say="sent")
         self.render_status()
 
     def open_dm(self, name: str) -> None:

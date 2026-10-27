@@ -3,6 +3,13 @@ from __future__ import annotations
 
 # Composite "RU · EN" phrases first, so English mode doesn't say things twice.
 EN = {
+    "ПРИВЕТ! НОВОЕ СООБЩЕНИЕ": "HELLO! NEW MESSAGE",
+    "СЛАБОЕ ЗАЖИГАНИЕ": "WEAK IGNITION",
+    "ВСЁ В НОРМЕ": "ALL NOMINAL",
+    "ДОСТАВЛЕНО!": "DELIVERED!",
+    "ОТПРАВЛЕНО!": "SENT!",
+    "НЕТ СВЯЗИ": "NO LINK",
+    "МИША": "MISHA",
     "ПИТАНИЕ ВКЛ · POWER ON": "POWER ON",
     "НЕТ АДРЕСАТА · NO TARGET": "NO TARGET",
     "── НЕТ ЗАПИСЕЙ · NO TRAFFIC LOGGED ──": "── NO TRAFFIC LOGGED ──",
@@ -63,7 +70,7 @@ EN = {
     "В": "V",
 }
 _KEYS = sorted(EN, key=len, reverse=True)
-_SUBTITLES = {"CHANNELS · CONTACTS", "COMMS LOG", "STATUS", "EVENTS"}
+_SUBTITLES = {"CHANNELS · CONTACTS", "COMMS LOG", "STATUS", "EVENTS", "MASCOT"}
 
 
 def tr(text: str, lang: str) -> str:

@@ -81,6 +81,7 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 | `/search <words>` | Search every logged message |
 | `/firmware` | Radio firmware vs the newest MeshCore Companion release |
 | Ctrl+T | Russian / English screen text |
+| Ctrl+B | Show / hide Misha |
 | `/help` | Command list |
 | Tab / Shift+Tab | Move between panels |
 | Ctrl+N / Ctrl+P | Next / previous conversation |
@@ -93,6 +94,7 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 - **Log:** `~/.local/share/luch/luch.db` (`--db` to change). Table `messages`, one row per message, duplicates ignored.
 - **Queue:** with nothing connected, the radio keeps a small queue of messages, pulled in on the next connect. Overflow is lost.
 - **Sidebar:** channels, room servers, and contacts with logged traffic. Repeaters and sensors are left out. `/dm` reaches anyone else.
+- **Misha (МИША):** a cosmonaut bear in the status column who reacts to the radio: waves at new messages, points up when a DM is delivered, and clutches his helmet when the link drops or the battery runs low (СЛАБОЕ ЗАЖИГАНИЕ, "weak ignition"). An homage to the diagnostic-screen mascot in *Red Planet* (2000), drawn from scratch.
 - **Firmware check:** on connect, LUCH compares the radio's firmware with the newest Companion release on GitHub (cached 6 hours) and shows ▲ NEW in the status panel when there's an update. Update with the [MeshCore web flasher](https://meshcore.io/flasher).
 - **Delivery:** DMs show ДОСТАВЛЕНО (delivered) on ACK, НЕТ ПОДТВ. (no ack) after the timeout.
 - `--direct` talks to the radio even when the logger runs. `--debug` writes `luch.log` next to the database.

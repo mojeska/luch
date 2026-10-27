@@ -72,3 +72,12 @@ Input > .input--cursor {
     background: #ffb000;
     color: #0b0d0a;
 }
+#mascot {
+    height: auto;
+    background: #0b0d0a;
+    border: double #6b5a22;
+    border-title-color: #ffb000;
+    border-title-style: bold;
+    border-subtitle-color: #6b5a22;
+    padding: 0 1;
+}
