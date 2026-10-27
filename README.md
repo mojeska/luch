@@ -118,7 +118,7 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 | `/tag <name> <tag>` / `/untag <name> <tag>` | Tag a contact (stored in LUCH only) |
 | `/tags [tag]` | List tags, or the contacts carrying one |
 | `/gps on\|off [secs]` | Radio GPS on or off, with an optional fix interval |
-| `/home <lat> <lon>` | Home position for weather (`/home clear`) |
+| `/home [<lat> <lon>]` | Show or set the home position for weather (`/home clear`) |
 | `/weather` | Weather details for the current position |
 | `/units metric\|imperial` | Units for weather |
 | `/cli <command>` | Run a radio CLI command (firmware 1.18+), e.g. `/cli get wifi.ip` |

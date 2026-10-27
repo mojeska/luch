@@ -29,3 +29,11 @@ async def test_position_prefers_radio_over_home(tmp_path):
         assert app.position() == (33.6, -117.7, "ДОМ")
         app.state = RadioState(connected=True, gps=True, lat=34.0, lon=-118.0, pos_src="GPS")
         assert app.position() == (34.0, -118.0, "GPS")
+
+
+async def test_home_without_args_reports(tmp_path):
+    app = LuchApp("x", tmp_path / "t.db", offline=True)
+    async with app.run_test(size=(140, 44)) as pilot:
+        await pilot.press(*"/home", "enter")
+        await pilot.pause()
+        assert "home" not in app.settings  # just reported, nothing set

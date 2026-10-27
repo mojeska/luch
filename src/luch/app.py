@@ -49,7 +49,7 @@ HELP = [
     "  /tag <name> <tag>   tag a contact (LUCH only; tag is one word)",
     "  /untag <name> <tag> remove a tag",
     "  /tags [tag]         list tags, or the contacts with one tag",
-    "  /home <lat> <lon>   home position for weather when there's no GPS fix (/home clear)",
+    "  /home [<lat> <lon>] show or set the home position for weather (/home clear)",
     "  /gps on|off [secs]  turn the radio's GPS on or off, optional update interval",
     "  /weather            weather details for the current position",
     "  /units metric|imperial",
@@ -569,6 +569,16 @@ class LuchApp(App):
         self.rebuild_convs()
 
     async def cmd_home(self, rest: str) -> None:
+        if not rest:
+            home = self.settings.get("home")
+            pos = self.position()
+            if home:
+                self.note(f"{self.t('ДОМ')}: {home[0]:.4f},{home[1]:.4f}")
+            else:
+                self.note(f"{self.t('ДОМ')}: {self.t('НЕ ЗАДАН')} · /home <lat> <lon>")
+            if pos and pos[2] != "ДОМ":
+                self.note(f"  weather now uses {self.t(pos[2])} {pos[0]:.4f},{pos[1]:.4f}; home is the fallback")
+            return
         if rest == "clear":
             self.settings.pop("home", None)
         else:
