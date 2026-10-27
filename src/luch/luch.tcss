@@ -42,6 +42,17 @@ Screen {
 }
 #center {
     width: 1fr;
+    layers: base overlay;
+}
+#countdown {
+    layer: overlay;
+    display: none;
+    width: 44;
+    height: 13;
+    background: #c8261e;
+    color: #ffe9a8;
+    border: heavy #ffe9a8;
+    padding: 1 1;
 }
 OptionList, RichLog, #status, #events {
     background: #0b0d0a;

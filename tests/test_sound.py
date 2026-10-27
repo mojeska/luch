@@ -48,11 +48,28 @@ async def test_mute_and_launch(tmp_path):
     async with app.run_test(size=(140, 44)) as pilot:
         await pilot.press("ctrl+s")
         assert app.sound.muted and app.settings["muted"] is True
+        app.countdown_seconds = 2
         await pilot.click("#launch")
-        await pilot.pause(0.3)
+        await pilot.pause(0.2)
+        assert app._count == 2 and app.query_one("#countdown").display
+        assert app.query_one(Mascot).reaction_say == "standby"
+        await pilot.pause(2.3)
+        assert not app.query_one("#countdown").display
         assert app.sound.playing
         assert app.query_one(Mascot).reaction_say == "anthem"
         assert "СТОП" in str(app.query_one("#launch").label)
         await pilot.press("escape")
         assert not app.sound.playing
         assert "ПУСК" in str(app.query_one("#launch").label)
+
+
+async def test_countdown_can_be_aborted(tmp_path):
+    app = LuchApp("x", tmp_path / "t.db", offline=True)
+    app.sound = FakeSound(tmp_path)
+    async with app.run_test(size=(140, 44)) as pilot:
+        app.countdown_seconds = 3
+        await pilot.press("ctrl+l")
+        await pilot.pause(0.2)
+        await pilot.press("escape")
+        await pilot.pause(3.2)
+        assert not app.sound.playing and not app.query_one("#countdown").display

@@ -21,6 +21,7 @@ from .radio import CONTACT_REPEATER, CONTACT_ROOM, CONTACT_SENSOR, Radio, RadioS
 from .remote import RemoteRadio
 from . import firmware, service
 from .i18n import subtitle, tr
+from .countdown import Countdown
 from .mascot import Mascot
 from .sound import Sound
 from .weather import WeatherCache
@@ -126,6 +127,9 @@ class LuchApp(App):
         self._fw_for: str | None = None
         self._events: list[tuple[str, str, str | None, str]] = []  # time, fixed text, conv, free text
         self.sound = Sound(db_path.parent, muted=self.settings.get("muted", False))
+        self.countdown_seconds = 10
+        self._count = 0
+        self._count_timer = None
         self._was_connected: bool | None = None
         self.weather_cache = WeatherCache()
         self.weather = None
@@ -172,6 +176,7 @@ class LuchApp(App):
             with Vertical(id="center"):
                 yield RichLog(id="log", wrap=True, markup=False, highlight=False)
                 yield Input(id="tx")
+                yield Countdown(id="countdown")
             with Vertical(id="right"):
                 yield Static(id="status")
                 yield Mascot(id="mascot")
@@ -195,7 +200,8 @@ class LuchApp(App):
             (" ^S ", key), (f" {t('ЗВУК')} {t('ВЫКЛ') if self.sound.muted else t('ВКЛ')}  ", lab),
             (" /help ", key), (f" {t('СПРАВКА')} ", lab),
         ))
-        self.query_one("#launch", Button).label = t("■ СТОП" if self.sound.anthem_playing() else "▶ ПУСК")
+        busy = self.sound.anthem_playing() or self._count > 0
+        self.query_one("#launch", Button).label = t("■ СТОП" if busy else "▶ ПУСК")
         self.query_one(Header).refresh_clock()
 
     def on_mount(self) -> None:
@@ -286,14 +292,47 @@ class LuchApp(App):
 
     def on_button_pressed(self, ev: Button.Pressed) -> None:
         if ev.button.id == "launch":
-            self.action_stop_anthem() if self.sound.anthem_playing() else self.action_launch()
+            busy = self.sound.anthem_playing() or self._count > 0
+            self.action_stop_anthem() if busy else self.action_launch()
 
     def action_launch(self) -> None:
+        if self._count > 0 or self.sound.anthem_playing():
+            return
         if not self.sound.available:
             self.event("НЕТ ЗВУКА ", free="(no afplay / paplay / aplay)")
             return
-        self.event("ПУСК ")
+        self.event("ПУСК ", free=f"T-{self.countdown_seconds}")
+        self._count = self.countdown_seconds
+        banner = self.query_one(Countdown)
+        banner.display = True
+        banner.place()
+        self._draw_count()
+        self.query_one(Mascot).react("point", 3600, say="standby")
+        self._count_timer = self.set_interval(1, self._count_tick)
+        self.apply_labels()
+
+    def _draw_count(self) -> None:
+        self.query_one(Countdown).show_count(self._count, self.t("ПУСК ЧЕРЕЗ"), self.t("ESC — ОТМЕНА"))
+        self.sound.tick()
+
+    def _count_tick(self) -> None:
+        self._count -= 1
+        if self._count > 0:
+            self._draw_count()
+            return
+        self._end_countdown()
         self.run_worker(self._start_anthem, thread=True, group="sound", exclusive=True)
+
+    def _end_countdown(self) -> None:
+        if self._count_timer:
+            self._count_timer.stop()
+            self._count_timer = None
+        self._count = 0
+        self.query_one(Countdown).display = False
+
+    def on_resize(self) -> None:
+        if self._count > 0:
+            self.query_one(Countdown).place()
 
     def _start_anthem(self) -> None:  # worker thread: the first run renders the WAV
         if self.sound.play_anthem():
@@ -304,13 +343,17 @@ class LuchApp(App):
         self.apply_labels()
 
     def action_stop_anthem(self) -> None:
-        if self.sound.anthem_playing():
+        if self._count > 0:
+            self._end_countdown()
+            self.event("ОТМЕНА")
+            self._anthem_done()
+        elif self.sound.anthem_playing():
             self.sound.stop_anthem()
             self._anthem_done()
 
     def _anthem_done(self) -> None:
         m = self.query_one(Mascot)
-        if m.reaction_say == "anthem":
+        if m.reaction_say in ("anthem", "standby"):
             m.react("point", 0.25, say="idle")
         self.apply_labels()
 

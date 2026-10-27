@@ -128,7 +128,7 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 | Ctrl+T | Russian / English screen text |
 | Ctrl+B | Show / hide Misha |
 | Ctrl+S, `/mute`, `/unmute` | Sound effects off / on (remembered) |
-| ▶ ПУСК button or Ctrl+L | Play the anthem in 8-bit; ■ СТОП, Esc or `/stop` ends it |
+| ▶ ПУСК button or Ctrl+L | 10-second countdown banner, then the anthem in 8-bit; ■ СТОП, Esc or `/stop` aborts or ends it |
 | `/help` | Command list |
 | Tab / Shift+Tab | Move between panels |
 | Ctrl+N / Ctrl+P | Next / previous conversation |

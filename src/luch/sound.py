@@ -89,6 +89,7 @@ EFFECTS = {
     "link_up": [(0.00, 72, 0.07, 0.25, 0.2, 0), (0.08, 76, 0.07, 0.25, 0.2, 0), (0.16, 79, 0.07, 0.25, 0.2, 0),
                 (0.24, 84, 0.16, 0.25, 0.2, 0)],
     "link_down": [(0.00, 79, 0.35, 0.5, 0.22, -12)],
+    "tick": [(0.00, 69, 0.07, 0.5, 0.22, 0)],
 }
 
 
@@ -219,6 +220,11 @@ class Sound:
             return
         self._last = now
         self._play(self._file(name))
+
+    def tick(self) -> None:
+        """Countdown tick: part of the launch the user asked for, so it ignores mute."""
+        if self.player:
+            self._play(self._file("tick"))
 
     def prepare(self) -> None:
         """Render every sound ahead of time (slow-ish in pure Python, so done in a worker)."""
