@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,7 +19,8 @@ from textual.widgets.option_list import Option
 from .daemon import default_socket_path, run_daemon, socket_alive
 from .radio import CONTACT_REPEATER, CONTACT_ROOM, CONTACT_SENSOR, Radio, RadioState
 from .remote import RemoteRadio
-from . import service
+from . import firmware, service
+from .i18n import subtitle, tr
 from .store import Message, Store, default_db_path
 
 DEFAULT_DEVICE = "MeshCore"
@@ -33,12 +35,14 @@ STATUS_RU = {
 
 HELP = [
     "КОМАНДЫ // COMMANDS",
+    "  /firmware           radio firmware vs the newest MeshCore Companion release",
     "  text + Enter        transmit on the selected channel or contact",
     "  /dm <name>          open a direct line to a contact (part of the name is enough)",
     "  /search <words>     search every logged message",
     "  /help               this list",
     "  Tab / Shift+Tab     move between panels",
     "  Ctrl+N / Ctrl+P     next / previous conversation",
+    "  Ctrl+T              Russian / English screen text",
     "  Ctrl+Q              quit",
 ]
 
@@ -55,11 +59,12 @@ class Header(Static):
     def refresh_clock(self) -> None:
         now = datetime.now()
         utc = datetime.now(UTC)
+        tt = self.app.t
         t = Text()
-        t.append(" ★ ЛУЧ-М ", style="bold #0b0d0a on #c8261e")
-        t.append("  АППАРАТУРА ЗАСЕКРЕЧЕННОЙ СВЯЗИ", style="bold #ffb000")
+        t.append(f" ★ {tt('ЛУЧ-М')} ", style="bold #0b0d0a on #c8261e")
+        t.append(f"  {tt('АППАРАТУРА ЗАСЕКРЕЧЕННОЙ СВЯЗИ')}", style="bold #ffb000")
         t.append("  //  MESH RADIO TERMINAL", style="#8a7a4a")
-        t.append(f"    МЕСТН {now:%H:%M:%S}   UTC {utc:%H:%M:%S}  ", style="#ffb000")
+        t.append(f"    {tt('МЕСТН')} {now:%H:%M:%S}   UTC {utc:%H:%M:%S}  ", style="#ffb000")
         self.update(t)
 
 
@@ -70,6 +75,7 @@ class LuchApp(App):
         Binding("ctrl+q", "quit", "ВЫХОД"),
         Binding("ctrl+n", "cycle(1)", "СЛЕД", show=False),
         Binding("ctrl+p", "cycle(-1)", "ПРЕД", show=False),
+        Binding("ctrl+t", "toggle_lang", "ПЕРЕВОД", show=False),
     ]
 
     def __init__(self, device: str, db_path: Path, offline: bool = False,
@@ -87,6 +93,22 @@ class LuchApp(App):
         self.convs: list[tuple[str, str]] = []  # (conv, label) in list order
         self.searching = False
         self.pinned: set[str] = set()
+        self.settings_file = db_path.parent / "settings.json"
+        self.settings = self._load_settings()
+        self.lang = self.settings.get("lang", "ru")
+        self.fw_cache = db_path.parent / "firmware.json"
+        self.fw_latest: firmware.Release | None = None
+        self._fw_for: str | None = None
+        self._events: list[tuple[str, str, str | None, str]] = []  # time, fixed text, conv, free text
+
+    def _load_settings(self) -> dict:
+        try:
+            return json.loads(self.settings_file.read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def t(self, text: str) -> str:
+        return tr(text, self.lang)
 
     # ---------------------------------------------------------------- layout
     def compose(self) -> ComposeResult:
@@ -96,27 +118,29 @@ class LuchApp(App):
                 yield OptionList(id="convs")
             with Vertical(id="center"):
                 yield RichLog(id="log", wrap=True, markup=False, highlight=False)
-                yield Input(placeholder="ПЕРЕДАЧА ▸  type and press Enter  ·  /help", id="tx")
+                yield Input(id="tx")
             with Vertical(id="right"):
                 yield Static(id="status")
                 yield Static(id="events")
         yield Static(id="footer")
 
-    def on_mount(self) -> None:
-        self.query_one("#convs").border_title = "КАНАЛЫ И АБОНЕНТЫ"
-        self.query_one("#convs").border_subtitle = "CHANNELS · CONTACTS"
-        self.query_one("#log").border_title = "ЖУРНАЛ СВЯЗИ"
-        self.query_one("#status").border_title = "СОСТОЯНИЕ"
-        self.query_one("#status").border_subtitle = "STATUS"
-        self.query_one("#events").border_title = "СОБЫТИЯ"
-        self.query_one("#events").border_subtitle = "EVENTS"
-        self._events: list[str] = []
+    def apply_labels(self) -> None:
+        t, sub = self.t, lambda s: subtitle(s, self.lang)
+        for wid, title, subt in (("#convs", "КАНАЛЫ И АБОНЕНТЫ", "CHANNELS · CONTACTS"),
+                                 ("#status", "СОСТОЯНИЕ", "STATUS"), ("#events", "СОБЫТИЯ", "EVENTS")):
+            w = self.query_one(wid)
+            w.border_title, w.border_subtitle = t(title), sub(subt)
+        self.query_one("#tx", Input).placeholder = t("ПЕРЕДАЧА ▸") + "  type and press Enter  ·  /help"
+        key, lab = "bold #0b0d0a on #ffb000", "#ffb000"
         self.query_one("#footer", Static).update(Text.assemble(
-            (" ^Q ", "bold #0b0d0a on #ffb000"), (" ВЫХОД  ", "#ffb000"),
-            (" ^N/^P ", "bold #0b0d0a on #ffb000"), (" КАНАЛ  ", "#ffb000"),
-            (" TAB ", "bold #0b0d0a on #ffb000"), (" ПАНЕЛЬ  ", "#ffb000"),
-            (" /help ", "bold #0b0d0a on #ffb000"), (" СПРАВКА ", "#ffb000"),
+            (" ^Q ", key), (f" {t('ВЫХОД')}  ", lab), (" ^N/^P ", key), (f" {t('КАНАЛ')}  ", lab),
+            (" TAB ", key), (f" {t('ПАНЕЛЬ')}  ", lab), (" ^T ", key), (f" {t('ПЕРЕВОД')}  ", lab),
+            (" /help ", key), (f" {t('СПРАВКА')} ", lab),
         ))
+        self.query_one(Header).refresh_clock()
+
+    def on_mount(self) -> None:
+        self.apply_labels()
         self.rebuild_convs()
         self.render_status()
         self.event("ПИТАНИЕ ВКЛ · POWER ON")
@@ -132,6 +156,9 @@ class LuchApp(App):
             self.state = data
             self.rebuild_convs()
             self.render_status()
+            if data.firmware and data.firmware != self._fw_for:
+                self._fw_for = data.firmware
+                self.run_worker(self.check_firmware(), name="firmware")
         elif kind == "message":
             msg = self.store.get(data)
             if not msg:
@@ -142,7 +169,7 @@ class LuchApp(App):
             else:
                 if msg.conv.startswith("dm:"):
                     self.bell()
-                self.event(f"ПРИЁМ ◄ {self.label_of(msg.conv)} · {msg.sender}")
+                self.event("ПРИЁМ ◄ ", msg.conv, f" · {msg.sender}")
             self.rebuild_convs()
             self.render_status()
         elif kind == "updated":
@@ -150,10 +177,57 @@ class LuchApp(App):
             if msg and msg.conv == self.current and not self.searching:
                 self.show_conv(self.current)
 
-    def event(self, line: str) -> None:
-        self._events.append(f"{datetime.now():%H:%M:%S} {line}")
+    def event(self, fixed: str, conv: str | None = None, free: str = "") -> None:
+        """`fixed` is screen text (translated); `conv` and `free` carry names and stay as they are."""
+        self._events.append((f"{datetime.now():%H:%M:%S}", fixed, conv, free))
         self._events = self._events[-14:]
-        self.query_one("#events", Static).update(Text("\n".join(self._events), style="#c9a64a"))
+        self.render_events()
+
+    def render_events(self) -> None:
+        lines = [f"{ts} {self.t(fixed)}{self.label_of(conv) if conv else ''}{free}"
+                 for ts, fixed, conv, free in self._events]
+        self.query_one("#events", Static).update(Text("\n".join(lines), style="#c9a64a"))
+
+    def action_toggle_lang(self) -> None:
+        self.lang = "en" if self.lang == "ru" else "ru"
+        self.settings["lang"] = self.lang
+        try:
+            self.settings_file.write_text(json.dumps(self.settings))
+        except OSError:
+            pass
+        self.apply_labels()
+        self.rebuild_convs()
+        self.render_status()
+        self.render_events()
+        if self.current and not self.searching:
+            self.show_conv(self.current)
+
+    async def check_firmware(self) -> None:
+        try:
+            self.fw_latest = await firmware.latest_release(self.fw_cache)
+        except Exception as e:
+            self.event("ПРОВЕРКА ПРОШИВКИ: ", free=f"{e}"[:40])
+            return
+        have = firmware.parse_version(self.state.firmware)
+        if self.fw_latest and have and self.fw_latest.version > have:
+            self.event("ДОСТУПНА ПРОШИВКА ", free=f"{firmware.fmt(self.fw_latest.version)} · /firmware")
+        self.render_status()
+
+    def show_firmware(self) -> None:
+        log = self.query_one("#log", RichLog)
+        have = firmware.parse_version(self.state.firmware)
+        lines = [f"{self.t('ПРОШИВКА')}: {self.state.firmware or '?'}"]
+        if self.fw_latest:
+            lines.append(f"NEWEST COMPANION RELEASE: {firmware.fmt(self.fw_latest.version)}  {self.fw_latest.url}")
+            if have and self.fw_latest.version > have:
+                lines.append(f"UPDATE WITH THE WEB FLASHER: {firmware.FLASHER}")
+                lines.append("  pick your board and the Companion build for your link (BLE or USB); settings are kept")
+            elif have:
+                lines.append(self.t("ПРОШИВКА АКТУАЛЬНА"))
+        else:
+            lines.append("NEWEST RELEASE NOT KNOWN YET (needs internet and a connected radio)")
+        for line in lines:
+            log.write(Text(line, style="#c9a64a"))
 
     # ---------------------------------------------------------------- conversation list
     def label_of(self, conv: str) -> str:
@@ -166,7 +240,7 @@ class LuchApp(App):
     def rebuild_convs(self) -> None:
         convs: list[tuple[str, str, str]] = []  # conv, label, group
         for ch in self.state.channels:
-            convs.append((ch.conv, f"К-{ch.idx:02d} {ch.name.upper()}", "chan"))
+            convs.append((ch.conv, f"{self.t('К-')}{ch.idx:02d} {ch.name.upper()}", "chan"))
         # Hundreds of contacts get auto-added from adverts; list only rooms, contacts with
         # logged traffic, and ones opened with /dm.
         talked = self.store.dm_convs_with_traffic()
@@ -176,18 +250,18 @@ class LuchApp(App):
                 continue
             if c.type != CONTACT_ROOM and c.conv not in talked and c.conv not in self.pinned:
                 continue
-            tag = "КОМ" if c.type == CONTACT_ROOM else "АБН"
+            tag = self.t("КОМ" if c.type == CONTACT_ROOM else "АБН")
             convs.append((c.conv, f"{tag} {c.name.upper()}", "dm"))
             seen.add(c.conv)
         for conv, title in self.store.known_dms():
             if conv not in seen and conv in talked:
-                convs.append((conv, f"АРХ {title.upper()}", "dm"))
+                convs.append((conv, f"{self.t('АРХ')} {title.upper()}", "dm"))
         if not self.state.channels:  # offline or not connected yet: show logged channels
             rows = self.store.db.execute(
                 "SELECT conv, title FROM conversations WHERE conv LIKE 'chan:%' ORDER BY conv").fetchall()
             for r in rows:
                 idx = int(r["conv"].split(":")[1])
-                convs.insert(0, (r["conv"], f"К-{idx:02d} {r['title'].upper()}", "chan"))
+                convs.insert(0, (r["conv"], f"{self.t('К-')}{idx:02d} {r['title'].upper()}", "chan"))
         self.convs = [(c, label) for c, label, _ in convs]
 
         ol = self.query_one("#convs", OptionList)
@@ -196,7 +270,7 @@ class LuchApp(App):
         last_group = None
         for conv, label, group in convs:
             if group != last_group:
-                head = "── КАНАЛЫ ──────────" if group == "chan" else "── АБОНЕНТЫ ────────"
+                head = f"── {self.t('КАНАЛЫ' if group == 'chan' else 'АБОНЕНТЫ')} ".ljust(20, "─")
                 ol.add_option(Option(Text(head, style="#c8261e"), disabled=True))
                 last_group = group
             n = self.store.unread(conv)
@@ -232,12 +306,12 @@ class LuchApp(App):
         self.searching = False
         log = self.query_one("#log", RichLog)
         log.clear()
-        log.border_title = f"ЖУРНАЛ СВЯЗИ · {self.label_of(conv)}"
-        log.border_subtitle = "COMMS LOG"
+        log.border_title = f"{self.t('ЖУРНАЛ СВЯЗИ')} · {self.label_of(conv)}"
+        log.border_subtitle = subtitle("COMMS LOG", self.lang)
         history = self.store.history(conv)
         self._log_empty = not history
         if not history:
-            log.write(Text("── НЕТ ЗАПИСЕЙ · NO TRAFFIC LOGGED ──", style="#5f5532"))
+            log.write(Text(self.t("── НЕТ ЗАПИСЕЙ · NO TRAFFIC LOGGED ──"), style="#5f5532"))
         for m in history:
             self.write_msg(m)
         self.store.mark_read(conv)
@@ -250,7 +324,7 @@ class LuchApp(App):
         t = Text()
         t.append(hhmmss(m.rx_ts), style="#8a7a4a")
         if m.direction == "in":
-            t.append("  ◄ ПРМ  ", style="bold #7fdc6f")
+            t.append(f"  ◄ {self.t('ПРМ')}  ", style="bold #7fdc6f")
             t.append(f"{m.sender[:14]:<14} ", style="bold #7fdc6f")
             t.append(m.text, style="#e8e2c8")
             meta = []
@@ -263,12 +337,12 @@ class LuchApp(App):
             if meta:
                 t.append(f"  [{' · '.join(meta)}]", style="#5f5532")
         else:
-            t.append("  ► ПРД  ", style="bold #ffb000")
+            t.append(f"  ► {self.t('ПРД')}  ", style="bold #ffb000")
             t.append(f"{m.sender[:14]:<14} ", style="bold #ffb000")
             t.append(m.text, style="#e8e2c8")
             if m.status:
                 colour = {"delivered": "#7fdc6f", "failed": "#ff4a3d", "no ack": "#ff4a3d"}.get(m.status, "#5f5532")
-                t.append(f"  [{STATUS_RU.get(m.status, m.status.upper())}]", style=colour)
+                t.append(f"  [{self.t(STATUS_RU.get(m.status, m.status.upper()))}]", style=colour)
         if show_conv:
             t = Text.assemble((f"{self.label_of(m.conv)[:10]:<10} ", "#c8261e"), t)
         log.write(t)
@@ -278,9 +352,9 @@ class LuchApp(App):
         s = self.state
         t = Text()
 
-        def row(k: str, v: str, style: str = "#ffb000") -> None:
-            t.append(f"{k:<9}", style="#8a7a4a")
-            t.append(f"{v}\n", style=style)
+        def row(k: str, v: str, style: str = "#ffb000", raw: str = "") -> None:
+            t.append(f"{self.t(k):<10}", style="#8a7a4a")
+            t.append(f"{self.t(v)}{raw}\n", style=style)
 
         if self.offline:
             row("СВЯЗЬ", "АВТОНОМНО", "bold #c9a64a")
@@ -290,7 +364,7 @@ class LuchApp(App):
             row("СВЯЗЬ", "□ НЕТ", "bold #ff4a3d")
         if self.via_logger:
             row("РЕЖИМ", "ЧЕРЕЗ ЛОГГЕР", "#c9a64a")
-        row("УЗЕЛ", s.name or "—")
+        row("УЗЕЛ", "", raw=s.name or "—")
         if s.freq:
             row("ЧАСТОТА", f"{s.freq:.3f} МГц")
             row("ПОЛОСА", f"{s.bw:g} кГц  SF{s.sf}")
@@ -299,6 +373,11 @@ class LuchApp(App):
             pct = max(0, min(100, round((s.battery_mv - 3300) / 9)))
             bars = round(pct / 10)
             row("АККУМ.", f"{'▮' * bars}{'▯' * (10 - bars)} {s.battery_mv / 1000:.2f}В")
+        have = firmware.parse_version(s.firmware)
+        if have:
+            row("ПРОШИВКА", firmware.fmt(have))
+            if self.fw_latest and self.fw_latest.version > have:
+                row("", f"▲ НОВАЯ {firmware.fmt(self.fw_latest.version)}", "bold #0b0d0a on #ffb000")
         reps = sum(1 for c in s.contacts if c.type == CONTACT_REPEATER)
         row("АБОНЕНТЫ", str(sum(1 for c in s.contacts if c.type not in (CONTACT_REPEATER, CONTACT_SENSOR))))
         row("РЕТРАНСЛ.", str(reps))
@@ -314,7 +393,10 @@ class LuchApp(App):
         if text in ("/help", "/?"):
             log = self.query_one("#log", RichLog)
             for line in HELP:
-                log.write(Text(line, style="#c9a64a"))
+                log.write(Text(self.t(line), style="#c9a64a"))
+            return
+        if text == "/firmware":
+            self.show_firmware()
             return
         if text.startswith("/dm "):
             self.open_dm(text[4:].strip())
@@ -330,7 +412,7 @@ class LuchApp(App):
         try:
             mid = await self.radio.send(self.current, text)
         except Exception as e:
-            self.event(f"СБОЙ ПЕРЕДАЧИ · {e}")
+            self.event("СБОЙ ПЕРЕДАЧИ · ", free=str(e))
             return
         msg = self.store.get(mid) if mid else None
         if msg:
@@ -344,9 +426,9 @@ class LuchApp(App):
         if len(hits) != 1:
             log = self.query_one("#log", RichLog)
             if not hits:
-                log.write(Text(f"── АБОНЕНТ НЕ НАЙДЕН · no contact matches '{name}' ──", style="#ff4a3d"))
+                log.write(Text(f"── {self.t('АБОНЕНТ НЕ НАЙДЕН')} · no contact matches '{name}' ──", style="#ff4a3d"))
             else:
-                log.write(Text(f"── {len(hits)} СОВПАДЕНИЙ · be more specific: ──", style="#c9a64a"))
+                log.write(Text(f"── {len(hits)} {self.t('СОВПАДЕНИЙ')} · be more specific: ──", style="#c9a64a"))
                 for c in hits[:15]:
                     log.write(Text(f"   {c.name}", style="#c9a64a"))
             return
@@ -359,11 +441,11 @@ class LuchApp(App):
         self.searching = True
         log = self.query_one("#log", RichLog)
         log.clear()
-        log.border_title = f"ПОИСК · {needle}"
+        log.border_title = f"{self.t('ПОИСК')} · {needle}"
         log.border_subtitle = "SEARCH · pick a conversation to leave"
         hits = self.store.search(needle)
         if not hits:
-            log.write(Text("── НЕ НАЙДЕНО · NOT FOUND ──", style="#5f5532"))
+            log.write(Text(self.t("── НЕ НАЙДЕНО · NOT FOUND ──"), style="#5f5532"))
         for m in hits:
             self.write_msg(m, show_conv=True)
 
@@ -382,6 +464,7 @@ def main() -> None:
     ap.add_argument("--offline", action="store_true", help="browse the log without connecting")
     ap.add_argument("--direct", action="store_true", help="talk to the radio directly even if the logger runs")
     ap.add_argument("--debug", action="store_true", help="write a debug log next to the database")
+    ap.add_argument("--english", action="store_true", help="start with English screen text (Ctrl+T switches)")
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("logger", parents=[link], help="run the background logger in the foreground")
     svc = sub.add_parser("service", help="manage the background logger (macOS launchd)")
@@ -413,7 +496,10 @@ def main() -> None:
         logging.getLogger().addHandler(logging.NullHandler())  # keep library warnings off the screen
     via_logger = (not args.offline and not args.direct
                   and asyncio.run(socket_alive(default_socket_path(args.db))))
-    LuchApp(args.device, args.db, offline=args.offline, port=args.port, via_logger=via_logger).run()
+    app = LuchApp(args.device, args.db, offline=args.offline, port=args.port, via_logger=via_logger)
+    if args.english:
+        app.lang = "en"
+    app.run()
 
 
 if __name__ == "__main__":

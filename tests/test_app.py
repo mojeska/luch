@@ -25,4 +25,9 @@ async def test_offline_ui_renders_and_receives(tmp_path):
         assert not any("OLGA" in label for label in labels)  # no contact entry without traffic
         await pilot.press(*"/dm hill", "enter")  # repeaters can't be opened
         assert app.current == "chan:0"
+        await pilot.press("ctrl+t")
+        assert app.lang == "en"
+        assert [label for _, label in app.convs][:2] == ["C-00 PUBLIC", "C-01 #TEST"]
+        await pilot.press("ctrl+t")
+        assert app.lang == "ru"
         app.save_screenshot(str(tmp_path / "shot.svg"))
