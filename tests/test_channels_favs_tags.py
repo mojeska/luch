@@ -116,3 +116,22 @@ async def test_screen_commands(tmp_path):
         await pilot.pause()
         assert favs == [("ab" * 32, True)]
         assert ("dm:" + "ab" * 6, "★ IVAN") in app.convs
+
+
+async def test_set_name_announces():
+    radio, cmds, _ = make_radio()
+    calls = []
+
+    async def set_name(n):
+        calls.append(("name", n))
+        return SimpleNamespace(type=EventType.OK, payload={})
+
+    async def send_advert(flood=False):
+        calls.append(("advert", flood))
+        return SimpleNamespace(type=EventType.OK, payload={})
+
+    cmds.set_name, cmds.send_advert = set_name, send_advert
+    await radio.set_name("Mojeska-T")
+    assert calls == [("name", "Mojeska-T"), ("advert", True)] and radio.state.name == "Mojeska-T"
+    with pytest.raises(ValueError):
+        await radio.set_name("x" * 40)

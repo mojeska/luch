@@ -21,7 +21,7 @@ from .store import Store
 
 log = logging.getLogger("luch.daemon")
 
-CALLABLE = {"join_channel", "leave_channel", "set_favourite", "set_gps", "cli", "reboot"}  # radio methods screens may call
+CALLABLE = {"join_channel", "leave_channel", "set_favourite", "set_gps", "cli", "reboot", "set_name"}  # radio methods screens may call
 
 
 def default_socket_path(db_path: Path) -> Path:

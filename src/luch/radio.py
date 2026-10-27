@@ -430,6 +430,19 @@ class Radio:
             raise RuntimeError("NO CLI REPLY (firmware 1.18+ needed)")
         return ev.payload.get("text", "").strip()
 
+    async def set_name(self, name: str) -> None:
+        """Rename the node and flood an advert so the mesh learns the new name."""
+        self._need_link()
+        name = name.strip()
+        if not name or len(name.encode()) > 31:
+            raise ValueError("NAME MUST BE 1-31 BYTES")
+        ev = await self.mc.commands.set_name(name)
+        if ev.type != EventType.OK:
+            raise RuntimeError(f"RADIO REFUSED: {ev.payload}")
+        self.state.name = name
+        self.notify("state", self.state)
+        await self.mc.commands.send_advert(flood=True)
+
     async def reboot(self) -> None:
         self._need_link()
         await self.mc.commands.reboot()

@@ -54,6 +54,8 @@ HELP = [
     "  /weather            weather details for the current position",
     "  /units metric|imperial",
     "  /cli <command>      run a radio CLI command, e.g. /cli get wifi.ip",
+    "  /name <new name>    rename this node and announce it (Bluetooth name changes after /reboot)",
+    "  /reboot             restart the radio (LUCH reconnects)",
     "  /help               this list",
     "  Tab / Shift+Tab     move between panels",
     "  Ctrl+N / Ctrl+P     next / previous conversation",
@@ -499,6 +501,7 @@ class LuchApp(App):
         cmd, _, rest = text.partition(" ")
         handler = {"/home": self.cmd_home, "/gps": self.cmd_gps, "/weather": self.cmd_weather,
                    "/units": self.cmd_units, "/cli": self.cmd_cli,
+                   "/name": self.cmd_name, "/reboot": self.cmd_reboot,
                    "/join": self.cmd_join, "/leave": self.cmd_leave, "/fav": self.cmd_fav,
                    "/unfav": self.cmd_unfav, "/tag": self.cmd_tag, "/untag": self.cmd_untag,
                    "/tags": self.cmd_tags}.get(cmd)
@@ -607,6 +610,18 @@ class LuchApp(App):
         self.note(f"{self.t('ПОГОДА')} @ {pos[0]:.4f},{pos[1]:.4f} ({self.t(pos[2])}) · Open-Meteo")
         self.note(f"  {w.temp:.0f}{w.temp_unit} {self.t(w.summary_ru)}, {self.t('ОЩУЩ.')} {w.feels:.0f}{w.temp_unit}")
         self.note(f"  {self.t('ВЕТЕР')} {w.wind:.0f} {w.wind_unit} {w.compass}, {self.t('ВЛАЖН.')} {w.humidity}%")
+
+    async def cmd_name(self, rest: str) -> None:
+        if not rest:
+            raise ValueError("/name <new name>")
+        old = self.state.name
+        await self.radio.set_name(rest)
+        self.event("УЗЕЛ ПЕРЕИМЕНОВАН ", free=f"{old} → {rest}")
+        self.note(f"── {old} → {rest} · announced to the mesh; Bluetooth name MeshCore-{rest} after /reboot ──")
+
+    async def cmd_reboot(self, rest: str) -> None:
+        self.event("ПЕРЕЗАГРУЗКА")
+        await self.radio.reboot()
 
     async def cmd_cli(self, rest: str) -> None:
         if not rest:

@@ -122,6 +122,8 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 | `/weather` | Weather details for the current position |
 | `/units metric\|imperial` | Units for weather |
 | `/cli <command>` | Run a radio CLI command (firmware 1.18+), e.g. `/cli get wifi.ip` |
+| `/name <new name>` | Rename the node and announce it (Bluetooth name changes after `/reboot`) |
+| `/reboot` | Restart the radio; LUCH reconnects |
 | `/firmware` | Radio firmware vs the newest MeshCore Companion release |
 | Ctrl+T | Russian / English screen text |
 | Ctrl+B | Show / hide Misha |

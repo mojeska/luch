@@ -89,6 +89,9 @@ class RemoteRadio:
     async def cli(self, command: str) -> str:
         return await self._request({"op": "call", "method": "cli", "args": [command]})
 
+    async def set_name(self, name: str) -> None:
+        await self._request({"op": "call", "method": "set_name", "args": [name]})
+
     async def reboot(self) -> None:
         await self._request({"op": "call", "method": "reboot", "args": []})
 

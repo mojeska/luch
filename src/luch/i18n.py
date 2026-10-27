@@ -3,6 +3,8 @@ from __future__ import annotations
 
 # Composite "RU · EN" phrases first, so English mode doesn't say things twice.
 EN = {
+    "УЗЕЛ ПЕРЕИМЕНОВАН": "NODE RENAMED",
+    "ПЕРЕЗАГРУЗКА": "REBOOTING",
     "ПЕРЕМ. ОБЛАЧН.": "PARTLY CLOUDY",
     "ЛЕДЯНАЯ МОРОСЬ": "FREEZING DRIZZLE",
     "ЛЕДЯНОЙ ДОЖДЬ": "FREEZING RAIN",
