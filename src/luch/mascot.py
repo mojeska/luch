@@ -9,6 +9,7 @@ from rich.text import Text
 from textual.widgets import Static
 
 W = 24
+BODY_CENTRE = 9  # column of the helmet's middle; stays put when an arm goes up
 COLOURS = {"R": "#e0532f", "F": "#f2e6c9", "Y": "#c6d92e", "B": "#4aa3f0"}
 
 FACES = {  # eyes, mouth
@@ -125,11 +126,14 @@ def frame(pose: str) -> list[tuple[str, str]]:
     return ["".join(ch for ch, _ in row) for row in grid], ["".join(m for _, m in row) for row in grid]
 
 
-def render(pose: str) -> Text:
+def render(pose: str, width: int = W) -> Text:
+    """The pose with the bear's body centred in `width` columns."""
     lines, masks = frame(pose)
+    pad = max(0, width // 2 - BODY_CENTRE)
     t = Text()
     for line, mask in zip(lines, masks):
-        for ch, m in zip(line, mask):
+        t.append(" " * pad)
+        for ch, m in list(zip(line, mask))[: max(0, width - pad)]:
             t.append(ch, style=COLOURS.get(m, ""))
         t.append("\n")
     return t
@@ -157,6 +161,9 @@ class Mascot(Static):
         self._reaction_left = int(seconds * 4)
         self.draw()
 
+    def on_resize(self) -> None:
+        self.draw()
+
     def _tick(self) -> None:
         self._ticks += 1
         if self._reaction_left:
@@ -174,6 +181,7 @@ class Mascot(Static):
             pose, say = self.base, self.say_key
             if pose == "idle" and self._ticks % 20 == 0:
                 pose = "blink"
-        t = render(pose)
-        t.append(self.app.t(SAYS[say]).center(W), style="bold #7fdc6f")
+        width = max(W, self.content_size.width or W)
+        t = render(pose, width)
+        t.append(self.app.t(SAYS[say]).center(width).rstrip(), style="bold #7fdc6f")
         self.update(t)
