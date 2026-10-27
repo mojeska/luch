@@ -128,6 +128,8 @@ class LuchApp(App):
         self._events: list[tuple[str, str, str | None, str]] = []  # time, fixed text, conv, free text
         self.sound = Sound(db_path.parent, muted=self.settings.get("muted", False))
         self.countdown_seconds = 10
+        self._start_count = self.store.count()
+        self.farewell = ""
         self._count = 0
         self._count_timer = None
         self._was_connected: bool | None = None
@@ -842,8 +844,16 @@ class LuchApp(App):
 
     async def on_unmount(self) -> None:
         self.sound.stop_anthem()
+        self.farewell = farewell(self.lang, self.state.name, self.store.count() - self._start_count)
         await self.radio.stop()
         self.store.close()
+
+
+def farewell(lang: str, node: str, logged: int) -> str:
+    """The line printed after LUCH closes."""
+    if lang == "en":
+        return f"★ LUCH-M · SESSION CLOSED · {node or 'NO NODE'} · {logged} logged · DO SVIDANIYA, COMRADE ★"
+    return f"★ ЛУЧ-М · СЕАНС СВЯЗИ ЗАВЕРШЁН · {node or 'НЕТ УЗЛА'} · записано: {logged} · ДО СВИДАНИЯ, ТОВАРИЩ ★"
 
 
 def radio_slug(name: str) -> str:
@@ -953,6 +963,8 @@ def main() -> None:
     if args.english:
         app.lang = "en"
     app.run()
+    if app.farewell:
+        print(f"\033[1;38;2;255;233;168;48;2;200;38;30m {app.farewell} \033[0m")
 
 
 if __name__ == "__main__":

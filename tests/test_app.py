@@ -49,3 +49,9 @@ async def test_mascot_moods(tmp_path):
         assert m.reaction == "wave"
         await pilot.press("ctrl+b")
         assert not m.display
+
+
+def test_farewell_line():
+    from luch.app import farewell
+    assert "ДО СВИДАНИЯ" in farewell("ru", "Mojeska", 3) and "записано: 3" in farewell("ru", "Mojeska", 3)
+    assert farewell("en", "", 0).startswith("★ LUCH-M · SESSION CLOSED · NO NODE")
