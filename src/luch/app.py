@@ -22,6 +22,7 @@ from .remote import RemoteRadio
 from . import firmware, service
 from .i18n import subtitle, tr
 from .mascot import Mascot
+from .weather import WeatherCache
 from .store import Message, Store, default_db_path
 
 DEFAULT_DEVICE = "MeshCore"
@@ -48,6 +49,11 @@ HELP = [
     "  /tag <name> <tag>   tag a contact (LUCH only; tag is one word)",
     "  /untag <name> <tag> remove a tag",
     "  /tags [tag]         list tags, or the contacts with one tag",
+    "  /home <lat> <lon>   home position for weather when there's no GPS fix (/home clear)",
+    "  /gps on|off [secs]  turn the radio's GPS on or off, optional update interval",
+    "  /weather            weather details for the current position",
+    "  /units metric|imperial",
+    "  /cli <command>      run a radio CLI command, e.g. /cli get wifi.ip",
     "  /help               this list",
     "  Tab / Shift+Tab     move between panels",
     "  Ctrl+N / Ctrl+P     next / previous conversation",
@@ -90,14 +96,14 @@ class LuchApp(App):
     ]
 
     def __init__(self, device: str, db_path: Path, offline: bool = False,
-                 port: str | None = None, via_logger: bool = False):
+                 port: str | None = None, via_logger: bool = False, tcp: str | None = None):
         super().__init__()
         self.store = Store(db_path)
         self.via_logger = via_logger
         if via_logger:
             self.radio = RemoteRadio(default_socket_path(db_path), self.on_radio)
         else:
-            self.radio = Radio(device, self.store, self.on_radio, port=port)
+            self.radio = Radio(device, self.store, self.on_radio, port=port, tcp=tcp)
         self.offline = offline
         self.state = RadioState()
         self.current: str | None = None
@@ -111,12 +117,38 @@ class LuchApp(App):
         self.fw_latest: firmware.Release | None = None
         self._fw_for: str | None = None
         self._events: list[tuple[str, str, str | None, str]] = []  # time, fixed text, conv, free text
+        self.weather_cache = WeatherCache()
+        self.weather = None
+        self._weather_err = ""
 
     def _load_settings(self) -> dict:
         try:
             return json.loads(self.settings_file.read_text())
         except (OSError, ValueError):
             return {}
+
+    @property
+    def imperial(self) -> bool:
+        return self.settings.get("units", "imperial") == "imperial"
+
+    def position(self) -> tuple[float, float, str] | None:
+        """GPS fix if the radio has one, else the position stored on the radio, else home."""
+        s = self.state
+        if s.lat is not None and s.lon is not None:
+            return s.lat, s.lon, s.pos_src
+        home = self.settings.get("home")
+        return (home[0], home[1], "ДОМ") if home else None
+
+    async def refresh_weather(self) -> None:
+        pos = self.position()
+        if not pos:
+            return
+        try:
+            self.weather = await self.weather_cache.get(pos[0], pos[1], self.imperial)
+            self._weather_err = ""
+        except Exception as e:
+            self._weather_err = str(e)[:30]
+        self.render_status()
 
     def t(self, text: str) -> str:
         return tr(text, self.lang)
@@ -160,6 +192,8 @@ class LuchApp(App):
         self.render_status()
         self.update_mascot()
         self.event("ПИТАНИЕ ВКЛ · POWER ON")
+        self.set_interval(300, lambda: self.run_worker(self.refresh_weather, group="weather", exclusive=True))
+        self.run_worker(self.refresh_weather, group="weather", exclusive=True)
         if not self.offline:
             self.run_worker(self.radio.run(), exclusive=True, name="radio")
         self.query_one("#tx", Input).focus()
@@ -173,6 +207,7 @@ class LuchApp(App):
             self.rebuild_convs()
             self.render_status()
             self.update_mascot()
+            self.run_worker(self.refresh_weather, group="weather", exclusive=True)
             if data.firmware and data.firmware != self._fw_for:
                 self._fw_for = data.firmware
                 self.run_worker(self.check_firmware(), name="firmware")
@@ -425,6 +460,19 @@ class LuchApp(App):
             row("ПРОШИВКА", firmware.fmt(have))
             if self.fw_latest and self.fw_latest.version > have:
                 row("", f"▲ НОВАЯ {firmware.fmt(self.fw_latest.version)}", "bold #0b0d0a on #ffb000")
+        pos = self.position()
+        if s.gps is not None:
+            row("GPS", "ВКЛ" if s.gps else "ВЫКЛ", raw=f"  {s.gps_interval}s" if s.gps and s.gps_interval else "")
+        if pos:
+            row("КООРД.", "", raw=f"{pos[0]:.4f},{pos[1]:.4f}")
+            row("", f"  {pos[2]}" + (f"  {s.alt:.0f}m" if pos[2] == "GPS" and s.alt else ""), "#8a7a4a")
+        w = self.weather
+        if w:
+            row("ПОГОДА", f"{w.temp:.0f}{w.temp_unit} {w.summary_ru}")
+            row("ВЕТЕР", "", raw=f"{w.wind:.0f} {w.wind_unit} {w.compass}")
+            row("ВЛАЖН.", "", raw=f"{w.humidity}%")
+        elif self._weather_err:
+            row("ПОГОДА", "—", "#ff4a3d", raw=f" {self._weather_err}")
         reps = sum(1 for c in s.contacts if c.type == CONTACT_REPEATER)
         row("АБОНЕНТЫ", str(sum(1 for c in s.contacts if c.type not in (CONTACT_REPEATER, CONTACT_SENSOR))))
         row("РЕТРАНСЛ.", str(reps))
@@ -449,7 +497,9 @@ class LuchApp(App):
             self.open_dm(text[4:].strip())
             return
         cmd, _, rest = text.partition(" ")
-        handler = {"/join": self.cmd_join, "/leave": self.cmd_leave, "/fav": self.cmd_fav,
+        handler = {"/home": self.cmd_home, "/gps": self.cmd_gps, "/weather": self.cmd_weather,
+                   "/units": self.cmd_units, "/cli": self.cmd_cli,
+                   "/join": self.cmd_join, "/leave": self.cmd_leave, "/fav": self.cmd_fav,
                    "/unfav": self.cmd_unfav, "/tag": self.cmd_tag, "/untag": self.cmd_untag,
                    "/tags": self.cmd_tags}.get(cmd)
         if handler:
@@ -514,6 +564,57 @@ class LuchApp(App):
         self.rebuild_convs()
         self.show_conv(c.conv)
         self.rebuild_convs()
+
+    async def cmd_home(self, rest: str) -> None:
+        if rest == "clear":
+            self.settings.pop("home", None)
+        else:
+            try:
+                lat, lon = (float(x) for x in rest.replace(",", " ").split())
+            except ValueError:
+                raise ValueError("/home <lat> <lon>, e.g. /home 33.64 -117.69") from None
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError("LAT -90..90, LON -180..180")
+            self.settings["home"] = [lat, lon]
+        self._save_settings()
+        self.weather = None
+        await self.refresh_weather()
+        self.render_status()
+
+    async def cmd_gps(self, rest: str) -> None:
+        parts = rest.split()
+        if not parts or parts[0] not in ("on", "off"):
+            raise ValueError("/gps on|off [interval seconds]")
+        interval = int(parts[1]) if len(parts) > 1 else None
+        await self.radio.set_gps(parts[0] == "on", interval)
+        self.event("GPS ", free=parts[0].upper())
+
+    async def cmd_units(self, rest: str) -> None:
+        if rest not in ("metric", "imperial"):
+            raise ValueError("/units metric|imperial")
+        self.settings["units"] = rest
+        self._save_settings()
+        await self.refresh_weather()
+
+    async def cmd_weather(self, rest: str) -> None:
+        pos = self.position()
+        if not pos:
+            raise ValueError("NO POSITION: turn on GPS (/gps on) or set /home <lat> <lon>")
+        await self.refresh_weather()
+        w = self.weather
+        if not w:
+            raise RuntimeError(f"WEATHER UNAVAILABLE {self._weather_err}")
+        self.note(f"{self.t('ПОГОДА')} @ {pos[0]:.4f},{pos[1]:.4f} ({self.t(pos[2])}) · Open-Meteo")
+        self.note(f"  {w.temp:.0f}{w.temp_unit} {self.t(w.summary_ru)}, {self.t('ОЩУЩ.')} {w.feels:.0f}{w.temp_unit}")
+        self.note(f"  {self.t('ВЕТЕР')} {w.wind:.0f} {w.wind_unit} {w.compass}, {self.t('ВЛАЖН.')} {w.humidity}%")
+
+    async def cmd_cli(self, rest: str) -> None:
+        if not rest:
+            raise ValueError("/cli <command>, e.g. /cli get wifi.ip")
+        reply = await self.radio.cli(rest)
+        shown = "set wifi.pwd ***" if rest.startswith("set wifi.pwd") else rest
+        self.note(f"CLI> {shown}")
+        self.note(f"     {reply}")
 
     async def cmd_join(self, rest: str) -> None:
         name, _, key = rest.partition(" ")
@@ -604,49 +705,110 @@ class LuchApp(App):
         self.store.close()
 
 
+def radio_slug(name: str) -> str:
+    """'MeshCore-Mojeska' -> 'mojeska': the per-radio log and socket name."""
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return re.sub(r"^meshcore-", "", slug) or "luch"
+
+
+def find_logger_db(data_dir: Path) -> Path | None:
+    """The database of the one running logger, so plain `luch` connects to it."""
+    alive = [p for p in sorted(data_dir.glob("*.sock")) if asyncio.run(socket_alive(p))]
+    return alive[0].with_suffix(".db") if len(alive) == 1 else None
+
+
+async def wifi_setup(args) -> None:
+    """Put a radio on Wi-Fi. Prompts for the password so it never lands in shell history."""
+    import getpass
+    ssid = input("Wi-Fi network (SSID, 2.4 GHz): ").strip()
+    pwd = getpass.getpass("Wi-Fi password: ")
+    db = args.db
+    if await socket_alive(default_socket_path(db)):
+        radio = RemoteRadio(default_socket_path(db), lambda k, d: None)
+    else:
+        radio = Radio(args.device or DEFAULT_DEVICE, Store(db), lambda k, d: None, port=args.port, tcp=args.tcp)
+    task = asyncio.create_task(radio.run())
+    for _ in range(60):
+        if radio.state.connected:
+            break
+        await asyncio.sleep(0.5)
+    else:
+        task.cancel()
+        raise SystemExit("could not reach the radio")
+    for cmd in (f"set wifi.ssid {ssid}", f"set wifi.pwd {pwd}", "set wifi.enabled 1"):
+        reply = await radio.cli(cmd)
+        print(reply.replace(pwd, "***") if pwd else reply)
+    print("rebooting the radio to join Wi-Fi...")
+    try:
+        await radio.reboot()
+    except Exception:
+        pass
+    await radio.stop()
+    task.cancel()
+    print("when it's back, `luch /cli get wifi.ip` or check your router; then connect with --tcp <ip>")
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="luch", description="ЛУЧ: MeshCore terminal over Bluetooth or USB")
+    ap = argparse.ArgumentParser(prog="luch", description="ЛУЧ: MeshCore terminal over Bluetooth, USB or Wi-Fi")
     link = argparse.ArgumentParser(add_help=False)
-    link.add_argument("-d", "--device", default=DEFAULT_DEVICE,
-                      help="BLE name (or part of it) or address, e.g. MeshCore-Mojeska")
-    link.add_argument("--port", help="use USB instead of Bluetooth: serial port, or 'auto' to find it")
-    link.add_argument("--db", type=Path, default=default_db_path(), help="SQLite log (default %(default)s)")
+    link.add_argument("-d", "--device", help="BLE name (or part of it) or address, e.g. MeshCore-Mojeska")
+    link.add_argument("--port", help="USB serial port, or 'auto' to find it")
+    link.add_argument("--tcp", metavar="HOST[:PORT]", help="radio on Wi-Fi (port 5000 by default)")
+    link.add_argument("--radio", help="name for this radio's log (default: from -d, e.g. MeshCore-Mojeska -> mojeska)")
+    link.add_argument("--db", type=Path, help="SQLite log (default ~/.local/share/luch/<radio>.db)")
     ap.add_argument("--offline", action="store_true", help="browse the log without connecting")
     ap.add_argument("--direct", action="store_true", help="talk to the radio directly even if the logger runs")
     ap.add_argument("--debug", action="store_true", help="write a debug log next to the database")
     ap.add_argument("--english", action="store_true", help="start with English screen text (Ctrl+T switches)")
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("logger", parents=[link], help="run the background logger in the foreground")
-    svc = sub.add_parser("service", help="manage the background logger (macOS launchd)")
+    sub.add_parser("wifi", parents=[link], help="put the radio on Wi-Fi (asks for SSID and password)")
+    svc = sub.add_parser("service", help="manage the background logger (launchd / systemd --user)")
     svc_sub = svc.add_subparsers(dest="action", required=True)
     svc_sub.add_parser("install", parents=[link], help="install and start at login")
     for name in ("uninstall", "start", "stop", "status"):
         svc_sub.add_parser(name)
-    # TUI options live on the top level too
-    for a in link._actions:
+    for a in link._actions:  # link options work on the top level too
         if a.dest != "help":
             ap._add_action(a)
     args = ap.parse_args()
-    args.db = args.db.expanduser()
+
+    data_dir = default_db_path().parent
+    data_dir.mkdir(parents=True, exist_ok=True)
+    if args.db:
+        args.db = args.db.expanduser()
+    else:
+        name = getattr(args, "radio", None) or (args.device and radio_slug(args.device))
+        if name:
+            args.db = data_dir / f"{radio_slug(name)}.db"
+        elif args.cmd is None and not args.offline and (found := find_logger_db(data_dir)):
+            args.db = found
+        else:
+            args.db = default_db_path()
     args.db.parent.mkdir(parents=True, exist_ok=True)
+    device = args.device or DEFAULT_DEVICE
 
     if args.cmd == "logger":
-        run_daemon(args.device, args.db, args.port)
+        run_daemon(device, args.db, args.port, args.tcp)
+        return
+    if args.cmd == "wifi":
+        asyncio.run(wifi_setup(args))
         return
     if args.cmd == "service":
         if args.action == "install":
-            service.install(args.device, args.db, args.port)
+            service.install(device, args.db, args.port, args.tcp)
         else:
             getattr(service, args.action)()
         return
 
     if args.debug:
-        logging.basicConfig(filename=str(args.db.parent / "luch.log"), level=logging.DEBUG)
+        logging.basicConfig(filename=str(args.db.with_suffix(".log")), level=logging.DEBUG)
     else:
         logging.getLogger().addHandler(logging.NullHandler())  # keep library warnings off the screen
     via_logger = (not args.offline and not args.direct
                   and asyncio.run(socket_alive(default_socket_path(args.db))))
-    app = LuchApp(args.device, args.db, offline=args.offline, port=args.port, via_logger=via_logger)
+    app = LuchApp(device, args.db, offline=args.offline, port=args.port, via_logger=via_logger, tcp=args.tcp)
     if args.english:
         app.lang = "en"
     app.run()

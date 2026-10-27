@@ -21,18 +21,18 @@ from .store import Store
 
 log = logging.getLogger("luch.daemon")
 
-CALLABLE = {"join_channel", "leave_channel", "set_favourite"}  # radio methods screens may call
+CALLABLE = {"join_channel", "leave_channel", "set_favourite", "set_gps", "cli", "reboot"}  # radio methods screens may call
 
 
 def default_socket_path(db_path: Path) -> Path:
-    return db_path.parent / "luch.sock"
+    return db_path.with_suffix(".sock")
 
 
 class Daemon:
-    def __init__(self, device: str, db_path: Path, port: str | None = None):
+    def __init__(self, device: str, db_path: Path, port: str | None = None, tcp: str | None = None):
         self.store = Store(db_path)
         self.sock_path = default_socket_path(db_path)
-        self.radio = Radio(device, self.store, self.notify, port=port)
+        self.radio = Radio(device, self.store, self.notify, port=port, tcp=tcp)
         self.clients: set[asyncio.StreamWriter] = set()
         self.last_status = "STARTING"
 
@@ -118,7 +118,7 @@ async def socket_alive(path: Path) -> bool:
     return True
 
 
-def run_daemon(device: str, db_path: Path, port: str | None) -> None:
+def run_daemon(device: str, db_path: Path, port: str | None, tcp: str | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("meshcore").setLevel(logging.ERROR)
-    asyncio.run(Daemon(device, db_path, port).run())
+    asyncio.run(Daemon(device, db_path, port, tcp).run())

@@ -56,6 +56,12 @@ class RadioState:
     battery_mv: int = 0
     firmware: str = ""
     link: str = ""
+    gps: bool | None = None       # None = no GPS on this radio
+    gps_interval: int = 0
+    lat: float | None = None      # last position the radio reported
+    lon: float | None = None
+    alt: float | None = None
+    pos_src: str = ""             # "GPS" or "RADIO" (position stored in the radio's settings)
     channels: list[Channel] = field(default_factory=list)
     contacts: list[Contact] = field(default_factory=list)
 
@@ -101,6 +107,16 @@ def parse_secret(text: str) -> bytes:
     return b
 
 
+def gps_from_lpp(lpp: list[dict]) -> tuple[float, float, float | None] | None:
+    for item in lpp:
+        if item.get("type") == "gps":
+            v = item.get("value") or {}
+            lat, lon = v.get("latitude"), v.get("longitude")
+            if lat is not None and lon is not None and (lat, lon) != (0, 0):
+                return float(lat), float(lon), v.get("altitude")
+    return None
+
+
 def split_channel_text(text: str) -> tuple[str, str]:
     """Channel messages arrive as 'Sender: text'."""
     name, sep, body = text.partition(": ")
@@ -112,9 +128,11 @@ def split_channel_text(text: str) -> tuple[str, str]:
 class Radio:
     """Owns the MeshCore connection. `notify(kind, data)` is called for every change."""
 
-    def __init__(self, device: str, store: Store, notify: Callable[[str, Any], None], port: str | None = None):
+    def __init__(self, device: str, store: Store, notify: Callable[[str, Any], None],
+                 port: str | None = None, tcp: str | None = None):
         self.device = device
-        self.port = port  # USB serial port; "auto" to find one. None = Bluetooth
+        self.port = port  # USB serial port; "auto" to find one
+        self.tcp = tcp    # "host[:port]" for a radio on Wi-Fi. Neither = Bluetooth
         self.store = store
         self.notify = notify
         self.state = RadioState()
@@ -128,7 +146,11 @@ class Radio:
         delay = 2
         while not self._stop:
             try:
-                if self.port:
+                if self.tcp:
+                    host, _, tport = self.tcp.partition(":")
+                    self.notify("status", f"WIFI {host}:{tport or 5000}")
+                    self.mc = await MeshCore.create_tcp(host, int(tport or 5000), default_timeout=10, only_error=True)
+                elif self.port:
                     port = find_usb_port() if self.port == "auto" else self.port
                     if not port:
                         raise RuntimeError("NO USB RADIO FOUND")
@@ -181,7 +203,13 @@ class Radio:
         dev_info = dev.payload if dev.type == EventType.DEVICE_INFO else {}
         s = self.state
         s.connected = True
-        s.link = "USB" if self.port else "BLE"
+        s.link = "WIFI" if self.tcp else "USB" if self.port else "BLE"
+        cv = await mc.commands.get_custom_vars()
+        vars_ = cv.payload if cv.type == EventType.CUSTOM_VARS else {}
+        s.gps = (vars_["gps"] == "1") if "gps" in vars_ else None
+        s.gps_interval = int(vars_.get("gps_interval", 0) or 0)
+        if info.get("adv_lat") or info.get("adv_lon"):
+            s.lat, s.lon, s.pos_src = info["adv_lat"], info["adv_lon"], "RADIO"
         s.name = info.get("name", "?")
         s.freq = info.get("radio_freq", 0.0)
         s.bw = info.get("radio_bw", 0.0)
@@ -212,6 +240,7 @@ class Radio:
         try:
             while not self._lost.is_set():
                 await self._poll_battery()
+                await self._poll_position()
                 try:
                     await asyncio.wait_for(self._lost.wait(), timeout=60)
                 except asyncio.TimeoutError:
@@ -263,6 +292,20 @@ class Radio:
         ev = await self.mc.commands.get_bat()
         if ev.type == EventType.BATTERY:
             self.state.battery_mv = ev.payload.get("level", 0)
+            self.notify("state", self.state)
+
+    async def _poll_position(self) -> None:
+        """Live GPS fix from the radio's own telemetry (only radios with GPS turned on)."""
+        assert self.mc
+        if not self.state.gps:
+            return
+        ev = await self.mc.commands.get_self_telemetry()
+        if ev.type != EventType.TELEMETRY_RESPONSE:
+            return
+        fix = gps_from_lpp(ev.payload.get("lpp", []))
+        if fix:
+            self.state.lat, self.state.lon, self.state.alt = fix
+            self.state.pos_src = "GPS"
             self.notify("state", self.state)
 
     # ---------------------------------------------------------------- incoming
@@ -363,6 +406,33 @@ class Radio:
             raise RuntimeError(f"RADIO REFUSED: {ev.payload}")
         await self._load_contacts()
         self.notify("state", self.state)
+
+    async def set_gps(self, on: bool, interval: int | None = None) -> None:
+        self._need_link()
+        if self.state.gps is None:
+            raise ValueError("THIS RADIO HAS NO GPS")
+        for key, value in (("gps", "1" if on else "0"),) + ((("gps_interval", str(interval)),) if interval is not None else ()):
+            ev = await self.mc.commands.set_custom_var(key, value)
+            if ev.type != EventType.OK:
+                raise RuntimeError(f"RADIO REFUSED {key}")
+        self.state.gps = on
+        if interval is not None:
+            self.state.gps_interval = interval
+        self.notify("state", self.state)
+        if on:
+            await self._poll_position()
+
+    async def cli(self, command: str) -> str:
+        """Run a Companion CLI command (firmware 1.18+), e.g. 'get wifi.ip'."""
+        self._need_link()
+        ev = await self.mc.commands.run_cli_command(command)
+        if ev.type != EventType.CLI_REPLY:
+            raise RuntimeError("NO CLI REPLY (firmware 1.18+ needed)")
+        return ev.payload.get("text", "").strip()
+
+    async def reboot(self) -> None:
+        self._need_link()
+        await self.mc.commands.reboot()
 
     async def send(self, conv: str, text: str) -> int | None:
         if not self.mc or not self.state.connected:

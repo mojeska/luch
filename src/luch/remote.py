@@ -83,6 +83,15 @@ class RemoteRadio:
     async def set_favourite(self, public_key: str, on: bool) -> None:
         await self._request({"op": "call", "method": "set_favourite", "args": [public_key, on]})
 
+    async def set_gps(self, on: bool, interval: int | None = None) -> None:
+        await self._request({"op": "call", "method": "set_gps", "args": [on, interval]})
+
+    async def cli(self, command: str) -> str:
+        return await self._request({"op": "call", "method": "cli", "args": [command]})
+
+    async def reboot(self) -> None:
+        await self._request({"op": "call", "method": "reboot", "args": []})
+
     async def stop(self) -> None:
         self._stop = True
         if self._writer:

@@ -18,12 +18,12 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
 
 
-def _args(device: str, db_path: Path, port: str | None) -> list[str]:
+def _args(device: str, db_path: Path, port: str | None, tcp: str | None = None) -> list[str]:
     args = [sys.executable, "-m", "luch", "logger", "--db", str(db_path)]
-    return args + (["--port", port] if port else ["-d", device])
+    return args + (["--tcp", tcp] if tcp else ["--port", port] if port else ["-d", device])
 
 
-def _install_linux(device: str, db_path: Path, port: str | None) -> None:
+def _install_linux(device: str, db_path: Path, port: str | None, tcp: str | None) -> None:
     import shlex
     UNIT.parent.mkdir(parents=True, exist_ok=True)
     UNIT.write_text(f"""[Unit]
@@ -31,7 +31,7 @@ Description=LUCH MeshCore logger
 After=bluetooth.target
 
 [Service]
-ExecStart={shlex.join(_args(device, db_path, port))}
+ExecStart={shlex.join(_args(device, db_path, port, tcp))}
 Restart=always
 RestartSec=10
 
@@ -54,12 +54,12 @@ def _launchctl(*args: str, check: bool = False) -> subprocess.CompletedProcess:
     return subprocess.run(["launchctl", *args], capture_output=True, text=True, check=check)
 
 
-def install(device: str, db_path: Path, port: str | None) -> None:
+def install(device: str, db_path: Path, port: str | None, tcp: str | None = None) -> None:
     if LINUX:
-        return _install_linux(device, db_path, port)
+        return _install_linux(device, db_path, port, tcp)
     if sys.platform != "darwin":
         raise SystemExit("service install supports macOS and Linux; run `luch logger` yourself elsewhere")
-    args = _args(device, db_path, port)
+    args = _args(device, db_path, port, tcp)
     log_path = db_path.parent / "logger.log"
     PLIST.parent.mkdir(parents=True, exist_ok=True)
     with open(PLIST, "wb") as f:

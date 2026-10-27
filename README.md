@@ -1,6 +1,6 @@
 # ЛУЧ (LUCH)
 
-Terminal client for a [MeshCore](https://github.com/meshcore-dev/MeshCore) Companion radio, styled like a Soviet comms console. Connects over Bluetooth or USB, and logs every message to SQLite. An optional background logger keeps the radio connected and logging while the screen is closed.
+Terminal client for a [MeshCore](https://github.com/meshcore-dev/MeshCore) Companion radio, styled like a Soviet comms console. Connects over Bluetooth, USB or Wi-Fi, and logs every message to SQLite. An optional background logger keeps the radio connected and logging while the screen is closed.
 
 ![LUCH screenshot](docs/screenshot.png)
 
@@ -31,6 +31,12 @@ USB, finding the port automatically (or give it, e.g. `--port /dev/cu.usbserial-
 .venv/bin/luch --port auto
 ```
 
+Wi-Fi (radio already on your network, TCP port 5000 by default).
+
+```sh
+.venv/bin/luch --tcp 192.168.1.50 --radio mynode
+```
+
 Browse the log without connecting.
 
 ```sh
@@ -57,6 +63,32 @@ bluetoothctl
 ```
 
 On Debian / Ubuntu the serial group is `dialout` instead of `uucp`.
+
+## Several radios
+
+Each radio gets its own log, `~/.local/share/luch/<radio>.db`, named from `-d` (`MeshCore-MyNode` → `mynode`) or set with `--radio`. Use the same `--radio` name whichever way you connect to a radio, so Bluetooth and Wi-Fi sessions share one log. Plain `luch` connects to the running logger.
+
+## Wi-Fi
+
+Companion firmware 1.18+ on some boards (Heltec V3, V4, Xiao S3, RAK3112 and others) runs Wi-Fi alongside Bluetooth. This asks for the network and password (2.4 GHz), stores them on the radio and reboots it:
+
+```sh
+.venv/bin/luch wifi -d MeshCore-MyNode
+```
+
+Find its address with `/cli get wifi.ip` in LUCH (or your router; a DHCP reservation keeps it fixed), then move the logger to Wi-Fi so Bluetooth is free for the phone app:
+
+```sh
+.venv/bin/luch service install --radio mynode --tcp 192.168.1.50
+```
+
+The phone and the logger can then be connected at once. Messages the radio queued while nobody was connected go to whichever client asks first.
+
+## GPS and weather
+
+On a radio with GPS (Wio Tracker L1, T1000-E, Heltec Wireless Tracker and others), `/gps on 60` turns it on with a fix every 60 seconds, and the status panel shows the position. Without a fix, LUCH uses the position stored on the radio, then a home position you set with `/home <lat> <lon>`. Current weather for that position comes from [Open-Meteo](https://open-meteo.com) (no key needed), refreshed every 15 minutes or when you move about 1 km. `/units metric` switches from °F and mph.
+
+Turning GPS on doesn't share your position: the radio only puts it in its adverts when its location policy says so.
 
 ## Background logger
 
@@ -85,6 +117,11 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 | `/fav [name]` / `/unfav [name]` | Favourite a contact on the radio (default: the one on screen) |
 | `/tag <name> <tag>` / `/untag <name> <tag>` | Tag a contact (stored in LUCH only) |
 | `/tags [tag]` | List tags, or the contacts carrying one |
+| `/gps on\|off [secs]` | Radio GPS on or off, with an optional fix interval |
+| `/home <lat> <lon>` | Home position for weather (`/home clear`) |
+| `/weather` | Weather details for the current position |
+| `/units metric\|imperial` | Units for weather |
+| `/cli <command>` | Run a radio CLI command (firmware 1.18+), e.g. `/cli get wifi.ip` |
 | `/firmware` | Radio firmware vs the newest MeshCore Companion release |
 | Ctrl+T | Russian / English screen text |
 | Ctrl+B | Show / hide Misha |
@@ -97,7 +134,7 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 
 - **One link at a time.** The radio takes one Bluetooth connection. Stop the logger (`luch service stop`) or close `luch` before using the phone app.
 - **USB needs USB firmware.** MeshCore Companion builds have one interface: a BLE build won't answer over USB. Flash the USB Companion build to use `--port`.
-- **Log:** `~/.local/share/luch/luch.db` (`--db` to change). Table `messages`, one row per message, duplicates ignored.
+- **Log:** `~/.local/share/luch/<radio>.db` (`--db` to change). Table `messages`, one row per message, duplicates ignored.
 - **Queue:** with nothing connected, the radio keeps a small queue of messages, pulled in on the next connect. Overflow is lost.
 - **Sidebar:** channels, then ★ favourites, then room servers and contacts with logged traffic or tags. Repeaters and sensors are left out. `/dm` reaches anyone else.
 - **Favourites** use the radio's own flag, so the phone app sees them too, and the radio never drops a favourite when its contact list fills up. **Tags** live only in LUCH's database.
