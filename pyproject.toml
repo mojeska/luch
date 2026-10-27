@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "ЛУЧ: MeshCore terminal over Bluetooth, logs everything to SQLite"
 requires-python = ">=3.11"
 dependencies = ["meshcore>=2.3", "textual>=8.0"]
+license = "MIT"
+readme = "README.md"
 
 [project.scripts]
 luch = "luch.app:main"

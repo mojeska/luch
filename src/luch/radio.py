@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import glob
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from meshcore import EventType, MeshCore
@@ -49,8 +50,33 @@ class RadioState:
     tx_power: int = 0
     battery_mv: int = 0
     firmware: str = ""
+    link: str = ""
     channels: list[Channel] = field(default_factory=list)
     contacts: list[Contact] = field(default_factory=list)
+
+
+def state_to_dict(s: RadioState) -> dict:
+    return asdict(s)
+
+
+def state_from_dict(d: dict) -> RadioState:
+    d = dict(d)
+    d["channels"] = [Channel(**c) for c in d.get("channels", [])]
+    d["contacts"] = [Contact(**c) for c in d.get("contacts", [])]
+    return RadioState(**d)
+
+
+USB_PATTERNS = ["/dev/cu.usbserial*", "/dev/cu.SLAB_USBtoUART*", "/dev/cu.wchusbserial*",
+                "/dev/cu.usbmodem*", "/dev/ttyUSB*", "/dev/ttyACM*"]
+
+
+def find_usb_port() -> str | None:
+    """First USB serial port that looks like a radio (Heltec V3 uses a CP2102)."""
+    for pat in USB_PATTERNS:
+        ports = sorted(glob.glob(pat))
+        if ports:
+            return ports[0]
+    return None
 
 
 def split_channel_text(text: str) -> tuple[str, str]:
@@ -64,8 +90,9 @@ def split_channel_text(text: str) -> tuple[str, str]:
 class Radio:
     """Owns the MeshCore connection. `notify(kind, data)` is called for every change."""
 
-    def __init__(self, device: str, store: Store, notify: Callable[[str, Any], None]):
+    def __init__(self, device: str, store: Store, notify: Callable[[str, Any], None], port: str | None = None):
         self.device = device
+        self.port = port  # USB serial port; "auto" to find one. None = Bluetooth
         self.store = store
         self.notify = notify
         self.state = RadioState()
@@ -77,11 +104,19 @@ class Radio:
     async def run(self) -> None:
         delay = 2
         while not self._stop:
-            self.notify("status", f"SCANNING FOR {self.device}")
             try:
-                self.mc = await MeshCore.create_ble(address=self.device, default_timeout=10, only_error=True)
-            except Exception as e:  # bleak raises a variety of errors
+                if self.port:
+                    port = find_usb_port() if self.port == "auto" else self.port
+                    if not port:
+                        raise RuntimeError("NO USB RADIO FOUND")
+                    self.notify("status", f"USB {port}")
+                    self.mc = await MeshCore.create_serial(port, 115200, default_timeout=10, only_error=True)
+                else:
+                    self.notify("status", f"SCANNING FOR {self.device}")
+                    self.mc = await MeshCore.create_ble(address=self.device, default_timeout=10, only_error=True)
+            except Exception as e:  # bleak and serial raise a variety of errors
                 log.warning("connect failed: %s", e)
+                self.notify("status", str(e).upper()[:60])
                 self.mc = None
             if self.mc is None:
                 self.notify("status", f"NO CONTACT · RETRY IN {delay}s")
@@ -123,6 +158,7 @@ class Radio:
         dev_info = dev.payload if dev.type == EventType.DEVICE_INFO else {}
         s = self.state
         s.connected = True
+        s.link = "USB" if self.port else "BLE"
         s.name = info.get("name", "?")
         s.freq = info.get("radio_freq", 0.0)
         s.bw = info.get("radio_bw", 0.0)

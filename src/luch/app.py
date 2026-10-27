@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +15,10 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 
+from .daemon import default_socket_path, run_daemon, socket_alive
 from .radio import CONTACT_REPEATER, CONTACT_ROOM, CONTACT_SENSOR, Radio, RadioState
+from .remote import RemoteRadio
+from . import service
 from .store import Message, Store, default_db_path
 
 DEFAULT_DEVICE = "MeshCore"
@@ -68,10 +72,15 @@ class LuchApp(App):
         Binding("ctrl+p", "cycle(-1)", "ПРЕД", show=False),
     ]
 
-    def __init__(self, device: str, db_path: Path, offline: bool = False):
+    def __init__(self, device: str, db_path: Path, offline: bool = False,
+                 port: str | None = None, via_logger: bool = False):
         super().__init__()
         self.store = Store(db_path)
-        self.radio = Radio(device, self.store, self.on_radio)
+        self.via_logger = via_logger
+        if via_logger:
+            self.radio = RemoteRadio(default_socket_path(db_path), self.on_radio)
+        else:
+            self.radio = Radio(device, self.store, self.on_radio, port=port)
         self.offline = offline
         self.state = RadioState()
         self.current: str | None = None
@@ -148,7 +157,11 @@ class LuchApp(App):
 
     # ---------------------------------------------------------------- conversation list
     def label_of(self, conv: str) -> str:
-        return next((label for c, label in self.convs if c == conv), conv)
+        label = next((label for c, label in self.convs if c == conv), None)
+        if label:
+            return label
+        row = self.store.db.execute("SELECT title FROM conversations WHERE conv = ?", (conv,)).fetchone()
+        return row["title"].upper() if row else conv
 
     def rebuild_convs(self) -> None:
         convs: list[tuple[str, str, str]] = []  # conv, label, group
@@ -272,9 +285,11 @@ class LuchApp(App):
         if self.offline:
             row("СВЯЗЬ", "АВТОНОМНО", "bold #c9a64a")
         elif s.connected:
-            row("СВЯЗЬ", "■ УСТАНОВЛЕНА", "bold #7fdc6f")
+            row("СВЯЗЬ", f"■ УСТАНОВЛЕНА {s.link}", "bold #7fdc6f")
         else:
             row("СВЯЗЬ", "□ НЕТ", "bold #ff4a3d")
+        if self.via_logger:
+            row("РЕЖИМ", "ЧЕРЕЗ ЛОГГЕР", "#c9a64a")
         row("УЗЕЛ", s.name or "—")
         if s.freq:
             row("ЧАСТОТА", f"{s.freq:.3f} МГц")
@@ -358,19 +373,47 @@ class LuchApp(App):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="luch", description="ЛУЧ: MeshCore terminal over Bluetooth")
-    ap.add_argument("-d", "--device", default=DEFAULT_DEVICE,
-                    help="BLE name (or part of it) or address of the radio, e.g. MeshCore-Mojeska")
-    ap.add_argument("--db", type=Path, default=default_db_path(), help="SQLite log (default %(default)s)")
+    ap = argparse.ArgumentParser(prog="luch", description="ЛУЧ: MeshCore terminal over Bluetooth or USB")
+    link = argparse.ArgumentParser(add_help=False)
+    link.add_argument("-d", "--device", default=DEFAULT_DEVICE,
+                      help="BLE name (or part of it) or address, e.g. MeshCore-Mojeska")
+    link.add_argument("--port", help="use USB instead of Bluetooth: serial port, or 'auto' to find it")
+    link.add_argument("--db", type=Path, default=default_db_path(), help="SQLite log (default %(default)s)")
     ap.add_argument("--offline", action="store_true", help="browse the log without connecting")
-    ap.add_argument("--debug", action="store_true", help="write a debug log to ~/.local/share/luch/luch.log")
+    ap.add_argument("--direct", action="store_true", help="talk to the radio directly even if the logger runs")
+    ap.add_argument("--debug", action="store_true", help="write a debug log next to the database")
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("logger", parents=[link], help="run the background logger in the foreground")
+    svc = sub.add_parser("service", help="manage the background logger (macOS launchd)")
+    svc_sub = svc.add_subparsers(dest="action", required=True)
+    svc_sub.add_parser("install", parents=[link], help="install and start at login")
+    for name in ("uninstall", "start", "stop", "status"):
+        svc_sub.add_parser(name)
+    # TUI options live on the top level too
+    for a in link._actions:
+        if a.dest != "help":
+            ap._add_action(a)
     args = ap.parse_args()
+    args.db = args.db.expanduser()
     args.db.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.cmd == "logger":
+        run_daemon(args.device, args.db, args.port)
+        return
+    if args.cmd == "service":
+        if args.action == "install":
+            service.install(args.device, args.db, args.port)
+        else:
+            getattr(service, args.action)()
+        return
+
     if args.debug:
         logging.basicConfig(filename=str(args.db.parent / "luch.log"), level=logging.DEBUG)
     else:
         logging.getLogger().addHandler(logging.NullHandler())  # keep library warnings off the screen
-    LuchApp(args.device, args.db, offline=args.offline).run()
+    via_logger = (not args.offline and not args.direct
+                  and asyncio.run(socket_alive(default_socket_path(args.db))))
+    LuchApp(args.device, args.db, offline=args.offline, port=args.port, via_logger=via_logger).run()
 
 
 if __name__ == "__main__":
