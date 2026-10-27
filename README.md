@@ -2,11 +2,25 @@
 
 Terminal client for a [MeshCore](https://github.com/meshcore-dev/MeshCore) Companion radio, styled like a Soviet comms console. Connects over Bluetooth, USB or Wi-Fi, and logs every message to SQLite. An optional background logger keeps the radio connected and logging while the screen is closed.
 
-![LUCH screenshot](docs/screenshot.png)
+> [!TIP]
+> **American comrade? Press `Ctrl+T`.** The screen is in Russian, and so is the label for the language switch (ПЕРЕВОД). `Ctrl+T` turns every heading, button and slogan into English ("Yankee mode"); press it again for Russian. LUCH remembers your choice, or start with `--english`. Messages are never translated.
+
+**Website:** [mojeska.github.io/luch](https://mojeska.github.io/luch/), where Misha the cosmonaut explains everything (and the ПУСК button works).
+
+![LUCH in Russian: channels, comms log, radio status with GPS and weather, Misha, and the slogan ticker](docs/screenshot.png)
+
+<details>
+<summary>Same screen in Yankee mode (Ctrl+T), and the launch countdown</summary>
+
+![LUCH in English after Ctrl+T](docs/screenshot-en.png)
+
+![The ПУСК countdown banner over the comms log](docs/countdown.png)
+
+</details>
 
 Built on [meshcore_py](https://github.com/meshcore-dev/meshcore_py) and [Textual](https://github.com/Textualize/textual). Runs on macOS and Linux. Tested on macOS with a Heltec V3.
 
-Screen text is Russian with English hints; **Ctrl+T** switches it all to English (remembered between runs, or start with `--english`). Messages are never translated.
+Screen text is Russian with English hints; **Ctrl+T** switches it all to English, see the tip above.
 
 ## Install
 
@@ -125,7 +139,7 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 | `/name <new name>` | Rename the node and announce it (Bluetooth name changes after `/reboot`) |
 | `/reboot` | Restart the radio; LUCH reconnects |
 | `/firmware` | Radio firmware vs the newest MeshCore Companion release |
-| Ctrl+T | Russian / English screen text |
+| **Ctrl+T** | **Yankee mode:** Russian / English screen text |
 | Ctrl+B | Show / hide Misha |
 | Ctrl+S, `/mute`, `/unmute` | Sound effects off / on (remembered) |
 | Ctrl+K, `/ticker` | Slogan ticker on / off (remembered) |
@@ -149,6 +163,14 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 - **Firmware check:** on connect, LUCH compares the radio's firmware with the newest Companion release on GitHub (cached 6 hours) and shows ▲ NEW in the status panel when there's an update. Update with the [MeshCore web flasher](https://meshcore.io/flasher).
 - **Delivery:** DMs show ДОСТАВЛЕНО (delivered) on ACK, НЕТ ПОДТВ. (no ack) after the timeout.
 - `--direct` talks to the radio even when the logger runs. `--debug` writes `luch.log` next to the database.
+
+## Screenshots
+
+Made from demo data (callsigns and a GPS fix at Baikonur), never your own log:
+
+```sh
+LUCH_SOUND=off .venv/bin/python tools/screenshots.py docs/   # writes SVGs; convert to PNG as you like
+```
 
 ## Tests
 
