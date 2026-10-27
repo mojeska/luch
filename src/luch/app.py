@@ -261,7 +261,7 @@ class LuchApp(App):
             if msg.conv == self.current and not self.searching:
                 self.write_msg(msg)
                 self.store.mark_read(msg.conv)
-            else:
+            elif msg.direction == "in":  # "out" here was sent from another screen on the same logger
                 if msg.conv.startswith("dm:"):
                     self.bell()
                 self.event("ПРИЁМ ◄ ", msg.conv, f" · {msg.sender}")

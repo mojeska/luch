@@ -4,6 +4,7 @@ Protocol: one JSON object per line.
   daemon -> client  {"kind": "state" | "status" | "message" | "updated", "data": ...}
   client -> daemon  {"op": "send", "req": n, "conv": "...", "text": "..."}
   daemon -> client  {"kind": "sent", "req": n, "id": <message id> | null, "error": "..." | null, "msg": {...}}
+Every other connected screen also gets that sent message as a "message", like one received.
 On the same machine, screens read messages from the shared SQLite log by id. A screen on another
 machine (socket forwarded over ssh) can't see that file, so "message", "updated" and "sent" also
 carry the row as "msg", the first line is {"kind": "hello", "data": {"host": ...}}, and
@@ -44,7 +45,7 @@ class Daemon:
         self.clients: set[asyncio.StreamWriter] = set()
         self.last_status = "STARTING"
 
-    def notify(self, kind: str, data: Any) -> None:
+    def notify(self, kind: str, data: Any, skip: asyncio.StreamWriter | None = None) -> None:
         extra = {}
         if kind == "state":
             data = state_to_dict(data)
@@ -60,11 +61,11 @@ class Daemon:
             m = self.store.get(data)
             if m:
                 extra["msg"] = asdict(m)
-        self.broadcast({"kind": kind, "data": data, **extra})
+        self.broadcast({"kind": kind, "data": data, **extra}, skip)
 
-    def broadcast(self, obj: dict) -> None:
+    def broadcast(self, obj: dict, skip: asyncio.StreamWriter | None = None) -> None:
         line = (json.dumps(obj) + "\n").encode()
-        for w in list(self.clients):
+        for w in list(self.clients - {skip}):
             try:
                 w.write(line)
             except Exception:
@@ -90,6 +91,8 @@ class Daemon:
                     except Exception as e:
                         reply["error"] = str(e)
                     writer.write((json.dumps(reply) + "\n").encode())
+                    if reply["id"]:  # other screens see it too; the sender already has it from the reply
+                        self.notify("message", reply["id"], skip=writer)
                 elif req.get("op") == "sync":
                     for i, m in enumerate(self.store.since(int(req.get("since") or 0))):
                         writer.write((json.dumps({"kind": "row", "data": asdict(m)}) + "\n").encode())

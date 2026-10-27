@@ -102,3 +102,48 @@ async def test_screen_on_another_machine_mirrors_the_log():
         task.cancel()
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_a_send_shows_on_the_other_screens():
+    """A message sent from one screen reaches every other screen on the logger, not just the sender."""
+    from luch.store import Store
+    d = Path(tempfile.mkdtemp(prefix="luch", dir="/tmp"))
+    try:
+        daemon = Daemon("fake", d / "luch.db")
+
+        async def fake_run():
+            daemon.radio.state = RadioState(connected=True, name="Mojeska", link="WiFi")
+            daemon.notify("state", daemon.radio.state)
+            await asyncio.Event().wait()
+
+        async def fake_send(conv, text):
+            return daemon.store.add(conv, "out", "Mojeska", text, 5, status="sent")
+
+        daemon.radio.run = fake_run
+        daemon.radio.send = fake_send
+        daemon.radio.stop = lambda: asyncio.sleep(0)
+        task = asyncio.create_task(daemon.run())
+        await asyncio.sleep(0.2)
+
+        sender_seen, local_seen, remote_seen = [], [], []
+        mirror = Store(":memory:")
+        clients = [
+            RemoteRadio(daemon.sock_path, lambda k, v: sender_seen.append((k, v))),
+            RemoteRadio(daemon.sock_path, lambda k, v: local_seen.append((k, v))),  # same machine
+            RemoteRadio(daemon.sock_path, lambda k, v: remote_seen.append((k, v)), mirror=mirror),
+        ]
+        tasks = [asyncio.create_task(c.run()) for c in clients]
+        await asyncio.sleep(0.3)
+
+        mid = await clients[0].send("chan:0", "привет")
+        await asyncio.sleep(0.1)
+        assert ("message", mid) in local_seen
+        assert ("message", mid) in remote_seen and mirror.get(mid).text == "привет"
+        assert ("message", mid) not in sender_seen  # it shows its own send from the reply
+
+        for c in clients:
+            await c.stop()
+        for t in tasks + [task]:
+            t.cancel()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
