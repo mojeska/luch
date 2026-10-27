@@ -69,6 +69,8 @@ HELP = [
     "  Tab / Shift+Tab     move between panels",
     "  Ctrl+N / Ctrl+P     next / previous conversation",
     "  Ctrl+T              Russian / English screen text",
+    "  Ctrl+O              hide / show the channels and contacts list (more room for the log)",
+    "  Ctrl+G              hide / show the status, Misha and events panel (more room for the log)",
     "  Ctrl+B              show / hide Misha",
     "  Ctrl+S  or /mute    sound effects on / off",
     "  Ctrl+K  or /ticker  slogan ticker on / off",
@@ -111,6 +113,8 @@ class LuchApp(App):
         Binding("ctrl+k", "toggle_ticker", "ЛОЗУНГИ", show=False, priority=True),
         Binding("ctrl+l", "launch", "ПУСК", show=False, priority=True),
         Binding("ctrl+r", "reply", "ОТВЕТ", show=False, priority=True),
+        Binding("ctrl+o", "toggle_convs", "СПИСОК", show=False, priority=True),
+        Binding("ctrl+g", "toggle_gauges", "ПРИБОРЫ", show=False, priority=True),
         Binding("escape", "stop_anthem", "СТОП", show=False),
     ]
 
@@ -213,7 +217,7 @@ class LuchApp(App):
         key, lab = "bold #0b0d0a on #ffb000", "#ffb000"
         self.query_one("#footer", Static).update(Text.assemble(
             (" ^Q ", key), (f" {t('ВЫХОД')}  ", lab), (" ^N/^P ", key), (f" {t('КАНАЛ')}  ", lab),
-            (" TAB ", key), (f" {t('ПАНЕЛЬ')}  ", lab), (" ^T ", key), (f" {t('ПЕРЕВОД')}  ", lab),
+            (" ^O ", key), (f" {t('СПИСОК')}  ", lab), (" ^G ", key), (f" {t('ПРИБОРЫ')}  ", lab), (" TAB ", key), (f" {t('ПАНЕЛЬ')}  ", lab), (" ^T ", key), (f" {t('ПЕРЕВОД')}  ", lab),
             (" ^S ", key), (f" {t('ЗВУК')} {t('ВЫКЛ') if self.sound.muted else t('ВКЛ')}  ", lab),
             (" ^K ", key), (f" {t('ЛОЗУНГИ')}  ", lab),
             (" /help ", key), (f" {t('СПРАВКА')} ", lab),
@@ -227,6 +231,10 @@ class LuchApp(App):
             self.query_one(Mascot).display = False
         if self.settings.get("ticker") is False:
             self.query_one(Ticker).display = False
+        if self.settings.get("convs") is False:
+            self.query_one("#left").display = False
+        if self.settings.get("gauges") is False:
+            self.query_one("#right").display = False
         self.apply_labels()
         self.rebuild_convs()
         self.render_status()
@@ -395,6 +403,22 @@ class LuchApp(App):
         self._save_settings()
         if tk.display:
             tk.rebuild()
+
+    def action_toggle_convs(self) -> None:
+        """Hide the channels and contacts list so the comms log gets its width. Ctrl+N/P still switch."""
+        self._toggle_panel("#left", "convs")
+
+    def action_toggle_gauges(self) -> None:
+        """Hide the status / Misha / events panel so the comms log gets its width."""
+        self._toggle_panel("#right", "gauges")
+
+    def _toggle_panel(self, selector: str, setting: str) -> None:
+        panel = self.query_one(selector)
+        panel.display = not panel.display
+        self.settings[setting] = bool(panel.display)
+        self._save_settings()
+        if not panel.display and self.focused and panel in self.focused.ancestors_with_self:
+            self.query_one("#tx", Input).focus()  # don't leave the cursor on a hidden panel
 
     def action_toggle_mascot(self) -> None:
         m = self.query_one(Mascot)

@@ -111,3 +111,48 @@ async def test_reply_with_ctrl_r_and_clicking_a_sender(tmp_path):
         app.open_dm("Ivan")  # in a DM, Ctrl+R just focuses the command line
         await pilot.press("ctrl+r")
         assert tx.value == "" and tx.has_focus
+
+
+async def test_ctrl_o_collapses_the_conversation_list(tmp_path):
+    from textual.widgets import Input, RichLog
+    app = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.on_radio("state", RadioState(connected=True, name="Mojeska",
+                                         channels=[Channel(0, "Public"), Channel(1, "#test")]))
+        await pilot.pause()
+        log = app.query_one("#log", RichLog)
+        wide_before = log.region.width
+        app.query_one("#convs").focus()
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert not app.query_one("#left").display
+        assert log.region.width >= wide_before + 30  # the list's width goes to the log
+        assert app.query_one("#tx", Input).has_focus  # not stuck on a hidden list
+        await pilot.press("ctrl+n")  # still switch conversations without it
+        assert app.current == "chan:1"
+
+    again = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with again.run_test(size=(100, 40)) as pilot:
+        assert not again.query_one("#left").display  # remembered
+        await pilot.press("ctrl+o")
+        assert again.query_one("#left").display and again.settings["convs"] is True
+
+
+async def test_ctrl_g_collapses_the_gauges_panel(tmp_path):
+    from textual.widgets import RichLog
+    app = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        log = app.query_one("#log", RichLog)
+        wide_before = log.region.width
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+        assert not app.query_one("#right").display
+        assert log.region.width >= wide_before + 32
+        await pilot.press("ctrl+o")  # both hidden: the log has the whole width
+        await pilot.pause()
+        assert log.region.width == app.size.width
+
+    again = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with again.run_test(size=(100, 40)):
+        assert not again.query_one("#right").display and not again.query_one("#left").display

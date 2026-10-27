@@ -99,6 +99,8 @@ EN = {
     "ПЕРЕВОД": "LANGUAGE",
     "ПАНЕЛЬ": "PANEL",
     "КАНАЛ": "CHANNEL",
+    "СПИСОК": "LIST",
+    "ПРИБОРЫ": "GAUGES",
     "ВЫХОД": "QUIT",
     "ПРИЁМ": "RECEIVED",
     "ПОИСК": "SEARCH",
