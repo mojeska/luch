@@ -3,6 +3,13 @@ from __future__ import annotations
 
 # Composite "RU · EN" phrases first, so English mode doesn't say things twice.
 EN = {
+    "СЛАВЬСЯ, ОТЕЧЕСТВО!": "GLORY TO THE FATHERLAND!",
+    "НЕТ ЗВУКА": "NO SOUND PLAYER",
+    "■ СТОП": "■ STOP",
+    "▶ ПУСК": "▶ LAUNCH",
+    "ЗВУК": "SOUND",
+    "ПУСК": "LAUNCH",
+    "ВКЛ": "ON",
     "НЕ ЗАДАН": "NOT SET",
     "УЗЕЛ ПЕРЕИМЕНОВАН": "NODE RENAMED",
     "ПЕРЕЗАГРУЗКА": "REBOOTING",

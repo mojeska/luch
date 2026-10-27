@@ -13,7 +13,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, OptionList, RichLog, Static
+from textual.widgets import Button, Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 
 from .daemon import default_socket_path, run_daemon, socket_alive
@@ -22,6 +22,7 @@ from .remote import RemoteRadio
 from . import firmware, service
 from .i18n import subtitle, tr
 from .mascot import Mascot
+from .sound import Sound
 from .weather import WeatherCache
 from .store import Message, Store, default_db_path
 
@@ -61,6 +62,8 @@ HELP = [
     "  Ctrl+N / Ctrl+P     next / previous conversation",
     "  Ctrl+T              Russian / English screen text",
     "  Ctrl+B              show / hide Misha",
+    "  Ctrl+S  or /mute    sound effects on / off",
+    "  Ctrl+L  or ПУСК     play the anthem; Esc, /stop or СТОП ends it",
     "  Ctrl+Q              quit",
 ]
 
@@ -95,6 +98,9 @@ class LuchApp(App):
         Binding("ctrl+p", "cycle(-1)", "ПРЕД", show=False),
         Binding("ctrl+t", "toggle_lang", "ПЕРЕВОД", show=False),
         Binding("ctrl+b", "toggle_mascot", "МИША", show=False),
+        Binding("ctrl+s", "toggle_mute", "ЗВУК", show=False, priority=True),
+        Binding("ctrl+l", "launch", "ПУСК", show=False, priority=True),
+        Binding("escape", "stop_anthem", "СТОП", show=False),
     ]
 
     def __init__(self, device: str, db_path: Path, offline: bool = False,
@@ -119,6 +125,8 @@ class LuchApp(App):
         self.fw_latest: firmware.Release | None = None
         self._fw_for: str | None = None
         self._events: list[tuple[str, str, str | None, str]] = []  # time, fixed text, conv, free text
+        self.sound = Sound(db_path.parent, muted=self.settings.get("muted", False))
+        self._was_connected: bool | None = None
         self.weather_cache = WeatherCache()
         self.weather = None
         self._weather_err = ""
@@ -168,7 +176,9 @@ class LuchApp(App):
                 yield Static(id="status")
                 yield Mascot(id="mascot")
                 yield Static(id="events")
-        yield Static(id="footer")
+        with Horizontal(id="footerbar"):
+            yield Static(id="footer")
+            yield Button("▶ ПУСК", id="launch")
 
     def apply_labels(self) -> None:
         t, sub = self.t, lambda s: subtitle(s, self.lang)
@@ -182,8 +192,10 @@ class LuchApp(App):
         self.query_one("#footer", Static).update(Text.assemble(
             (" ^Q ", key), (f" {t('ВЫХОД')}  ", lab), (" ^N/^P ", key), (f" {t('КАНАЛ')}  ", lab),
             (" TAB ", key), (f" {t('ПАНЕЛЬ')}  ", lab), (" ^T ", key), (f" {t('ПЕРЕВОД')}  ", lab),
+            (" ^S ", key), (f" {t('ЗВУК')} {t('ВЫКЛ') if self.sound.muted else t('ВКЛ')}  ", lab),
             (" /help ", key), (f" {t('СПРАВКА')} ", lab),
         ))
+        self.query_one("#launch", Button).label = t("■ СТОП" if self.sound.anthem_playing() else "▶ ПУСК")
         self.query_one(Header).refresh_clock()
 
     def on_mount(self) -> None:
@@ -194,6 +206,8 @@ class LuchApp(App):
         self.render_status()
         self.update_mascot()
         self.event("ПИТАНИЕ ВКЛ · POWER ON")
+        self.run_worker(self.sound.prepare, thread=True, group="sound")  # render the WAVs once
+        self.set_interval(0.5, self._watch_anthem)
         self.set_interval(300, lambda: self.run_worker(self.refresh_weather, group="weather", exclusive=True))
         self.run_worker(self.refresh_weather, group="weather", exclusive=True)
         if not self.offline:
@@ -205,6 +219,9 @@ class LuchApp(App):
         if kind == "status":
             self.event(str(data))
         elif kind == "state":
+            if self._was_connected is not None and data.connected != self._was_connected:
+                self.sound.effect("link_up" if data.connected else "link_down")
+            self._was_connected = data.connected
             self.state = data
             self.rebuild_convs()
             self.render_status()
@@ -217,6 +234,8 @@ class LuchApp(App):
             msg = self.store.get(data)
             if not msg:
                 return
+            if msg.direction == "in":
+                self.sound.effect("dm" if msg.conv.startswith("dm:") else "rx")
             self.query_one(Mascot).react("wave", 6)
             if msg.conv == self.current and not self.searching:
                 self.write_msg(msg)
@@ -230,6 +249,7 @@ class LuchApp(App):
         elif kind == "updated":
             msg = self.store.get(data)
             if msg and msg.status == "delivered":
+                self.sound.effect("delivered")
                 self.query_one(Mascot).react("point", 4)
             if msg and msg.conv == self.current and not self.searching:
                 self.show_conv(self.current)
@@ -255,6 +275,50 @@ class LuchApp(App):
             m.set_base("distress", "battery")
         else:
             m.set_base("idle", "idle")
+
+    # ---------------------------------------------------------------- sound
+    def action_toggle_mute(self) -> None:
+        self.sound.muted = not self.sound.muted
+        self.settings["muted"] = self.sound.muted
+        self._save_settings()
+        self.event("ЗВУК ", free="OFF" if self.sound.muted else "ON")
+        self.apply_labels()
+
+    def on_button_pressed(self, ev: Button.Pressed) -> None:
+        if ev.button.id == "launch":
+            self.action_stop_anthem() if self.sound.anthem_playing() else self.action_launch()
+
+    def action_launch(self) -> None:
+        if not self.sound.available:
+            self.event("НЕТ ЗВУКА ", free="(no afplay / paplay / aplay)")
+            return
+        self.event("ПУСК ")
+        self.run_worker(self._start_anthem, thread=True, group="sound", exclusive=True)
+
+    def _start_anthem(self) -> None:  # worker thread: the first run renders the WAV
+        if self.sound.play_anthem():
+            self.call_from_thread(self._anthem_started)
+
+    def _anthem_started(self) -> None:
+        self.query_one(Mascot).react("point", 3600, say="anthem")
+        self.apply_labels()
+
+    def action_stop_anthem(self) -> None:
+        if self.sound.anthem_playing():
+            self.sound.stop_anthem()
+            self._anthem_done()
+
+    def _anthem_done(self) -> None:
+        m = self.query_one(Mascot)
+        if m.reaction_say == "anthem":
+            m.react("point", 0.25, say="idle")
+        self.apply_labels()
+
+    def _watch_anthem(self) -> None:
+        playing = self.sound.anthem_playing()
+        if getattr(self, "_anthem_was", False) and not playing:
+            self._anthem_done()
+        self._anthem_was = playing
 
     def action_toggle_mascot(self) -> None:
         m = self.query_one(Mascot)
@@ -487,6 +551,13 @@ class LuchApp(App):
         ev.input.value = ""
         if not text:
             return
+        if text in ("/mute", "/unmute"):
+            if (text == "/mute") != self.sound.muted:
+                self.action_toggle_mute()
+            return
+        if text == "/stop":
+            self.action_stop_anthem()
+            return
         if text in ("/help", "/?"):
             log = self.query_one("#log", RichLog)
             for line in HELP:
@@ -528,6 +599,7 @@ class LuchApp(App):
         if msg:
             self.write_msg(msg)
             if msg.status == "sent":
+                self.sound.effect("sent")
                 self.query_one(Mascot).react("point", 3, say="sent")
         self.render_status()
 
@@ -726,6 +798,7 @@ class LuchApp(App):
             self.write_msg(m, show_conv=True)
 
     async def on_unmount(self) -> None:
+        self.sound.stop_anthem()
         await self.radio.stop()
         self.store.close()
 

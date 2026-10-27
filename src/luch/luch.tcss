@@ -7,9 +7,29 @@ Screen {
     height: 1;
     background: #16140c;
 }
-#footer {
+#footerbar {
     height: 1;
     background: #16140c;
+}
+#footer {
+    width: 1fr;
+    height: 1;
+    background: #16140c;
+}
+#launch {
+    height: 1;
+    min-width: 12;
+    border: none;
+    padding: 0 1;
+    background: #c8261e;
+    color: #ffe9a8;
+    text-style: bold;
+}
+#launch:hover {
+    background: #ff4a3d;
+}
+#launch:focus {
+    text-style: bold reverse;
 }
 #body {
     height: 1fr;
