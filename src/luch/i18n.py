@@ -62,6 +62,7 @@ EN = {
     "МИША": "MISHA",
     "ПИТАНИЕ ВКЛ · POWER ON": "POWER ON",
     "НЕТ АДРЕСАТА · NO TARGET": "NO TARGET",
+    "НЕКОМУ ОТВЕЧАТЬ · NOTHING TO REPLY TO": "NOTHING TO REPLY TO",
     "── НЕТ ЗАПИСЕЙ · NO TRAFFIC LOGGED ──": "── NO TRAFFIC LOGGED ──",
     "── НЕ НАЙДЕНО · NOT FOUND ──": "── NOT FOUND ──",
     "АППАРАТУРА ЗАСЕКРЕЧЕННОЙ СВЯЗИ": "SECURE COMMUNICATIONS EQUIPMENT",

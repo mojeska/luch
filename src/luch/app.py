@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -46,6 +47,8 @@ HELP = [
     "  /firmware           radio firmware vs the newest MeshCore Companion release",
     "  text + Enter        transmit on the selected channel or contact",
     "  /dm <name>          open a direct line to a contact (part of the name is enough)",
+    "  Ctrl+R              reply to the last message here (on a channel: starts with @[sender])",
+    "  click a sender      on a channel, start a reply to them with @[name]",
     "  /search <words>     search every logged message",
     "  /join #name         join a hashtag channel (key comes from the name)",
     "  /join <name> <key>  join a private channel (32 hex chars or base64)",
@@ -107,6 +110,7 @@ class LuchApp(App):
         Binding("ctrl+s", "toggle_mute", "ЗВУК", show=False, priority=True),
         Binding("ctrl+k", "toggle_ticker", "ЛОЗУНГИ", show=False, priority=True),
         Binding("ctrl+l", "launch", "ПУСК", show=False, priority=True),
+        Binding("ctrl+r", "reply", "ОТВЕТ", show=False, priority=True),
         Binding("escape", "stop_anthem", "СТОП", show=False),
     ]
 
@@ -142,6 +146,7 @@ class LuchApp(App):
         self._count = 0
         self._count_timer = None
         self._was_connected: bool | None = None
+        self._reply_targets: list[tuple[str, str]] = []  # (conv, sender) behind each clickable name
         self.weather_cache = WeatherCache()
         self.weather = None
         self._weather_err = ""
@@ -545,7 +550,12 @@ class LuchApp(App):
         t.append(hhmmss(m.rx_ts), style="#8a7a4a")
         if m.direction == "in":
             t.append(f"  ◄ {self.t('ПРМ')}  ", style="bold #7fdc6f")
-            t.append(f"{m.sender[:14]:<14} ", style="bold #7fdc6f")
+            name_style = Style(bold=True, color="#7fdc6f")
+            if m.conv.startswith("chan:"):  # click the name to start a reply mentioning them
+                self._reply_targets.append((m.conv, m.sender))
+                name_style += Style(meta={"@click": f"app.mention({len(self._reply_targets) - 1})"})
+            t.append(f"{m.sender[:14]:<14}", style=name_style)
+            t.append(" ")
             t.append(m.text, style="#e8e2c8")
             meta = []
             if m.snr is not None:
@@ -705,6 +715,39 @@ class LuchApp(App):
         if c is None:
             self.note("── open a contact first, or give a name ──", "#ff4a3d")
         return c
+
+    # ---------------------------------------------------------------- replies
+    def start_reply(self, sender: str) -> None:
+        """Put @[sender] at the start of the command line (replacing any earlier mention) and focus it."""
+        inp = self.query_one("#tx", Input)
+        rest = re.sub(r"^@\[[^\]]*\]\s*", "", inp.value)
+        inp.value = f"@[{sender}] {rest}"
+        inp.focus()
+        inp.cursor_position = len(inp.value)
+
+    def action_mention(self, i: int) -> None:
+        if not 0 <= i < len(self._reply_targets):
+            return
+        conv, sender = self._reply_targets[i]
+        if conv != self.current or self.searching:  # clicked in search results: go to that channel
+            self.show_conv(conv)
+            self.rebuild_convs()
+        self.start_reply(sender)
+
+    def action_reply(self) -> None:
+        if not self.current:
+            self.event("НЕТ АДРЕСАТА · NO TARGET")
+            return
+        if self.searching:
+            self.show_conv(self.current)
+        if self.current.startswith("dm:"):  # everything typed here already goes to them
+            self.query_one("#tx", Input).focus()
+            return
+        last = next((m for m in reversed(self.store.history(self.current, 200)) if m.direction == "in"), None)
+        if not last:
+            self.event("НЕКОМУ ОТВЕЧАТЬ · NOTHING TO REPLY TO")
+            return
+        self.start_reply(last.sender)
 
     def open_dm(self, name: str) -> None:
         c = self.find_contact(name)

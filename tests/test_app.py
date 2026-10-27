@@ -75,3 +75,39 @@ async def test_ticker_scrolls_and_toggles(tmp_path):
 def test_ticker_includes_ukrainian_slogans():
     from luch.ticker import UA_SLOGANS
     assert ("СЛАВА ЗСУ!", "Glory to the Armed Forces of Ukraine!") in UA_SLOGANS and len(UA_SLOGANS) == 8
+
+
+async def test_reply_with_ctrl_r_and_clicking_a_sender(tmp_path):
+    from textual.widgets import Input, RichLog
+    app = LuchApp("MeshCore-Test", tmp_path / "t.db", offline=True)
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.on_radio("state", RadioState(connected=True, name="Mojeska", channels=[Channel(0, "Public")],
+                                         contacts=[Contact("ab" * 32, "Ivan", 1, 0, 2)]))
+        app.on_radio("message", app.store.add("chan:0", "in", "Olga", "anyone on?", 1_700_000_000))
+        app.on_radio("message", app.store.add("chan:0", "in", "Ivan", "приём", 1_700_000_100))
+        await pilot.pause()
+        tx = app.query_one("#tx", Input)
+
+        await pilot.press("ctrl+r")  # newest sender
+        assert tx.value == "@[Ivan] " and tx.has_focus
+        await pilot.press(*"da")
+        await pilot.press("ctrl+r")  # a second Ctrl+R keeps what was typed
+        assert tx.value == "@[Ivan] da"
+
+        # Click Olga's name in the log (the first message line).
+        log = app.query_one("#log", RichLog)
+        x = 0
+        for seg in log.lines[0]._segments:
+            if seg.style and seg.style.meta.get("@click"):
+                break
+            x += len(seg.text)
+        left = log.content_region.x - log.region.x  # border + padding
+        top = log.content_region.y - log.region.y
+        await pilot.click("#log", offset=(left + x + 1, top))
+        await pilot.pause()
+        assert tx.value == "@[Olga] da"
+
+        tx.value = ""
+        app.open_dm("Ivan")  # in a DM, Ctrl+R just focuses the command line
+        await pilot.press("ctrl+r")
+        assert tx.value == "" and tx.has_focus

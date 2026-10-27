@@ -179,6 +179,7 @@ Host radio-host
 | --- | --- |
 | Enter | Transmit on the selected channel or contact |
 | `/dm <name>` | Open a direct line to a contact |
+| Ctrl+R, or click a sender's name | Reply: on a channel, starts the line with `@[sender]` (Ctrl+R picks the newest message from someone else); in a DM, jumps to the command line |
 | `/search <words>` | Search every logged message |
 | `/join #name` | Join a hashtag channel (the key comes from the name) |
 | `/join <name> <key>` | Join a private channel (key: 32 hex characters or base64) |
