@@ -55,3 +55,18 @@ def test_farewell_line():
     from luch.app import farewell
     assert "ДО СВИДАНИЯ" in farewell("ru", "Mojeska", 3) and "записано: 3" in farewell("ru", "Mojeska", 3)
     assert farewell("en", "", 0).startswith("★ LUCH-M · SESSION CLOSED · NO NODE")
+
+
+async def test_ticker_scrolls_and_toggles(tmp_path):
+    from luch.ticker import Ticker
+    app = LuchApp("x", tmp_path / "t.db", offline=True)
+    async with app.run_test(size=(140, 44)) as pilot:
+        tk = app.query_one(Ticker)
+        await pilot.pause(0.3)
+        first = tk._offset
+        await pilot.pause(0.5)
+        assert tk._offset > first  # moving
+        await pilot.press("ctrl+k")
+        assert not tk.display and app.settings["ticker"] is False
+        await pilot.press("ctrl+k")
+        assert tk.display

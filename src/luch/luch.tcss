@@ -7,6 +7,10 @@ Screen {
     height: 1;
     background: #16140c;
 }
+#ticker {
+    height: 1;
+    background: #7a1712;
+}
 #footerbar {
     height: 1;
     background: #16140c;

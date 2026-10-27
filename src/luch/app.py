@@ -23,6 +23,7 @@ from . import firmware, service
 from .i18n import subtitle, tr
 from .countdown import Countdown
 from .mascot import Mascot
+from .ticker import Ticker
 from .sound import Sound
 from .weather import WeatherCache
 from .store import Message, Store, default_db_path
@@ -64,6 +65,7 @@ HELP = [
     "  Ctrl+T              Russian / English screen text",
     "  Ctrl+B              show / hide Misha",
     "  Ctrl+S  or /mute    sound effects on / off",
+    "  Ctrl+K  or /ticker  slogan ticker on / off",
     "  Ctrl+L  or ПУСК     play the anthem; Esc, /stop or СТОП ends it",
     "  Ctrl+Q              quit",
 ]
@@ -100,6 +102,7 @@ class LuchApp(App):
         Binding("ctrl+t", "toggle_lang", "ПЕРЕВОД", show=False),
         Binding("ctrl+b", "toggle_mascot", "МИША", show=False),
         Binding("ctrl+s", "toggle_mute", "ЗВУК", show=False, priority=True),
+        Binding("ctrl+k", "toggle_ticker", "ЛОЗУНГИ", show=False, priority=True),
         Binding("ctrl+l", "launch", "ПУСК", show=False, priority=True),
         Binding("escape", "stop_anthem", "СТОП", show=False),
     ]
@@ -183,6 +186,7 @@ class LuchApp(App):
                 yield Static(id="status")
                 yield Mascot(id="mascot")
                 yield Static(id="events")
+        yield Ticker(id="ticker")
         with Horizontal(id="footerbar"):
             yield Static(id="footer")
             yield Button("▶ ПУСК", id="launch")
@@ -200,6 +204,7 @@ class LuchApp(App):
             (" ^Q ", key), (f" {t('ВЫХОД')}  ", lab), (" ^N/^P ", key), (f" {t('КАНАЛ')}  ", lab),
             (" TAB ", key), (f" {t('ПАНЕЛЬ')}  ", lab), (" ^T ", key), (f" {t('ПЕРЕВОД')}  ", lab),
             (" ^S ", key), (f" {t('ЗВУК')} {t('ВЫКЛ') if self.sound.muted else t('ВКЛ')}  ", lab),
+            (" ^K ", key), (f" {t('ЛОЗУНГИ')}  ", lab),
             (" /help ", key), (f" {t('СПРАВКА')} ", lab),
         ))
         busy = self.sound.anthem_playing() or self._count > 0
@@ -209,6 +214,8 @@ class LuchApp(App):
     def on_mount(self) -> None:
         if self.settings.get("mascot") is False:
             self.query_one(Mascot).display = False
+        if self.settings.get("ticker") is False:
+            self.query_one(Ticker).display = False
         self.apply_labels()
         self.rebuild_convs()
         self.render_status()
@@ -365,6 +372,14 @@ class LuchApp(App):
             self._anthem_done()
         self._anthem_was = playing
 
+    def action_toggle_ticker(self) -> None:
+        tk = self.query_one(Ticker)
+        tk.display = not tk.display
+        self.settings["ticker"] = bool(tk.display)
+        self._save_settings()
+        if tk.display:
+            tk.rebuild()
+
     def action_toggle_mascot(self) -> None:
         m = self.query_one(Mascot)
         m.display = not m.display
@@ -382,6 +397,7 @@ class LuchApp(App):
         self.settings["lang"] = self.lang
         self._save_settings()
         self.apply_labels()
+        self.query_one(Ticker).rebuild()
         self.rebuild_convs()
         self.render_status()
         self.render_events()
@@ -599,6 +615,9 @@ class LuchApp(App):
         if text in ("/mute", "/unmute"):
             if (text == "/mute") != self.sound.muted:
                 self.action_toggle_mute()
+            return
+        if text == "/ticker":
+            self.action_toggle_ticker()
             return
         if text == "/stop":
             self.action_stop_anthem()
