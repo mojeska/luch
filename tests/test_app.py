@@ -70,3 +70,8 @@ async def test_ticker_scrolls_and_toggles(tmp_path):
         assert not tk.display and app.settings["ticker"] is False
         await pilot.press("ctrl+k")
         assert tk.display
+
+
+def test_ticker_includes_ukrainian_slogans():
+    from luch.ticker import UA_SLOGANS
+    assert ("СЛАВА ЗСУ!", "Glory to the Armed Forces of Ukraine!") in UA_SLOGANS and len(UA_SLOGANS) == 8

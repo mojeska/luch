@@ -1,4 +1,4 @@
-"""A news-ticker of historical Soviet slogans scrolling along the bottom of the screen."""
+"""A news-ticker scrolling along the bottom of the screen: historical Soviet slogans and Ukrainian ones."""
 from __future__ import annotations
 
 import random
@@ -30,6 +30,17 @@ SLOGANS = [
     ("УЧИТЬСЯ, УЧИТЬСЯ И УЧИТЬСЯ!", "Study, study and study! (Lenin)"),
     ("ПАРТИЯ — НАШ РУЛЕВОЙ!", "The Party is our helmsman!"),
 ]
+# Ukrainian slogans, shown in Ukrainian-flag yellow.
+UA_SLOGANS = [
+    ("СЛАВА УКРАЇНІ! — ГЕРОЯМ СЛАВА!", "Glory to Ukraine! Glory to the heroes!"),
+    ("ВСЕ БУДЕ УКРАЇНА!", "Everything will be Ukraine!"),
+    ("УКРАЇНА ПОНАД УСЕ!", "Ukraine above all!"),
+    ("СЛАВА ЗСУ!", "Glory to the Armed Forces of Ukraine!"),
+    ("РАЗОМ ДО ПЕРЕМОГИ!", "Together toward victory!"),
+    ("БУДЬМО!", "Let us be! (a toast)"),
+    ("ТРИМАЙСЯ!", "Hang in there! Stay strong!"),
+    ("ПОВЕРТАЙСЯ ЖИВИМ І ЗДОРОВЕНЬКИМ", "Come back alive and well"),
+]
 SEP = "   ★   "
 
 
@@ -48,11 +59,13 @@ class Ticker(Static):
     def _shuffle(self) -> Text:
         lang = getattr(self.app, "lang", "ru")
         t = Text()
-        for ru, en in random.sample(SLOGANS, len(SLOGANS)):
+        pool = [(ru, en, False) for ru, en in SLOGANS] + [(ua, en, True) for ua, en in UA_SLOGANS]
+        for text, en, ukrainian in random.sample(pool, len(pool)):
+            colour = "bold #ffd700" if ukrainian else "bold #ffe9a8"
             if lang == "en":
-                t.append(en.upper(), style="bold #ffe9a8")
+                t.append(en.upper(), style=colour)
             else:
-                t.append(ru, style="bold #ffe9a8")
+                t.append(text, style=colour)
                 t.append(f"  ({en})", style="#e8a598")
             t.append(SEP, style="#ffb000")
         return t
