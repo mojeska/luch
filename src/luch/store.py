@@ -187,6 +187,26 @@ class Store:
     def tagged_convs(self) -> set[str]:
         return {r[0] for r in self.db.execute("SELECT DISTINCT conv FROM tags")}
 
+    def put(self, m: dict) -> None:
+        """Copy a message row from another machine's log, keeping its id."""
+        self.db.execute(
+            "INSERT OR REPLACE INTO messages "
+            "(id, conv, direction, sender, text, sender_ts, rx_ts, snr, rssi, path_len, status) "
+            "VALUES (:id, :conv, :direction, :sender, :text, :sender_ts, :rx_ts, :snr, :rssi, :path_len, :status)",
+            m,
+        )
+        self.db.commit()
+
+    def since(self, msg_id: int) -> list[Message]:
+        rows = self.db.execute("SELECT * FROM messages WHERE id > ? ORDER BY id", (msg_id,)).fetchall()
+        return [self._msg(r) for r in rows]
+
+    def titles(self) -> list[tuple[str, str]]:
+        return [(r[0], r[1]) for r in self.db.execute("SELECT conv, title FROM conversations")]
+
+    def max_id(self) -> int:
+        return self.db.execute("SELECT COALESCE(MAX(id), 0) FROM messages").fetchone()[0]
+
     def count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
 

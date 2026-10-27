@@ -3,8 +3,13 @@
 Protocol: one JSON object per line.
   daemon -> client  {"kind": "state" | "status" | "message" | "updated", "data": ...}
   client -> daemon  {"op": "send", "req": n, "conv": "...", "text": "..."}
-  daemon -> client  {"kind": "sent", "req": n, "id": <message id> | null, "error": "..." | null}
-Messages themselves are read from the shared SQLite log by id.
+  daemon -> client  {"kind": "sent", "req": n, "id": <message id> | null, "error": "..." | null, "msg": {...}}
+On the same machine, screens read messages from the shared SQLite log by id. A screen on another
+machine (socket forwarded over ssh) can't see that file, so "message", "updated" and "sent" also
+carry the row as "msg", the first line is {"kind": "hello", "data": {"host": ...}}, and
+  client -> daemon  {"op": "sync", "since": n}
+answers with every row after id n as {"kind": "row", "data": {...}}, then
+{"kind": "synced", "data": [[conv, title], ...]}.
 """
 from __future__ import annotations
 
@@ -13,6 +18,8 @@ import json
 import logging
 import os
 import signal
+import socket
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +45,7 @@ class Daemon:
         self.last_status = "STARTING"
 
     def notify(self, kind: str, data: Any) -> None:
+        extra = {}
         if kind == "state":
             data = state_to_dict(data)
         elif kind == "status":
@@ -47,7 +55,12 @@ class Daemon:
             m = self.store.get(data)
             if m:
                 log.info("%s %s %s: %s", m.conv, m.direction, m.sender, m.text)
-        self.broadcast({"kind": kind, "data": data})
+                extra["msg"] = asdict(m)
+        elif kind == "updated":
+            m = self.store.get(data)
+            if m:
+                extra["msg"] = asdict(m)
+        self.broadcast({"kind": kind, "data": data, **extra})
 
     def broadcast(self, obj: dict) -> None:
         line = (json.dumps(obj) + "\n").encode()
@@ -59,6 +72,7 @@ class Daemon:
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.clients.add(writer)
+        writer.write((json.dumps({"kind": "hello", "data": {"host": socket.gethostname()}}) + "\n").encode())
         writer.write((json.dumps({"kind": "state", "data": state_to_dict(self.radio.state)}) + "\n").encode())
         writer.write((json.dumps({"kind": "status", "data": self.last_status}) + "\n").encode())
         try:
@@ -71,9 +85,17 @@ class Daemon:
                     reply = {"kind": "sent", "req": req.get("req"), "id": None, "error": None}
                     try:
                         reply["id"] = await self.radio.send(req["conv"], req["text"])
+                        if reply["id"] and (m := self.store.get(reply["id"])):
+                            reply["msg"] = asdict(m)
                     except Exception as e:
                         reply["error"] = str(e)
                     writer.write((json.dumps(reply) + "\n").encode())
+                elif req.get("op") == "sync":
+                    for i, m in enumerate(self.store.since(int(req.get("since") or 0))):
+                        writer.write((json.dumps({"kind": "row", "data": asdict(m)}) + "\n").encode())
+                        if i % 200 == 199:
+                            await writer.drain()
+                    writer.write((json.dumps({"kind": "synced", "data": self.store.titles()}) + "\n").encode())
                 elif req.get("op") == "call" and req.get("method") in CALLABLE:
                     reply = {"kind": "sent", "req": req.get("req"), "id": None, "error": None}
                     try:

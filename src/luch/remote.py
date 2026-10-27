@@ -8,12 +8,33 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .radio import RadioState, state_from_dict
+from .store import Store
+
+LINE_LIMIT = 16 * 1024 * 1024  # a state line with many contacts can pass asyncio's 64 KiB default
+
+
+async def logger_host(sock_path: Path) -> str | None:
+    """Hostname the logger behind this socket runs on (None for loggers too old to say)."""
+    try:
+        reader, w = await asyncio.wait_for(
+            asyncio.open_unix_connection(str(sock_path), limit=LINE_LIMIT), 3)
+    except (OSError, asyncio.TimeoutError):
+        return None
+    try:
+        msg = json.loads(await asyncio.wait_for(reader.readline(), 3))
+        return msg["data"]["host"] if msg.get("kind") == "hello" else None
+    except (asyncio.TimeoutError, ValueError, KeyError, TypeError):
+        return None
+    finally:
+        w.close()
 
 
 class RemoteRadio:
-    def __init__(self, sock_path: Path, notify: Callable[[str, Any], None]):
+    def __init__(self, sock_path: Path, notify: Callable[[str, Any], None], mirror: Store | None = None):
+        """`mirror`: a local copy of the logger's log, for a logger on another machine."""
         self.sock_path = sock_path
         self.notify = notify
+        self.mirror = mirror
         self.state = RadioState()
         self._writer: asyncio.StreamWriter | None = None
         self._pending: dict[int, asyncio.Future] = {}
@@ -23,7 +44,7 @@ class RemoteRadio:
     async def run(self) -> None:
         while not self._stop:
             try:
-                reader, self._writer = await asyncio.open_unix_connection(str(self.sock_path))
+                reader, self._writer = await asyncio.open_unix_connection(str(self.sock_path), limit=LINE_LIMIT)
             except OSError:
                 self.notify("status", "LOGGER NOT RUNNING · RETRY")
                 await asyncio.sleep(3)
@@ -32,7 +53,7 @@ class RemoteRadio:
             try:
                 while line := await reader.readline():
                     self._handle(json.loads(line))
-            except (ConnectionResetError, json.JSONDecodeError):
+            except (ConnectionResetError, ValueError):
                 pass
             self._writer = None
             self.state.connected = False
@@ -47,6 +68,22 @@ class RemoteRadio:
 
     def _handle(self, msg: dict) -> None:
         kind = msg.get("kind")
+        if self.mirror is not None:
+            if kind == "hello":
+                self._writer.write((json.dumps({"op": "sync", "since": self.mirror.max_id()}) + "\n").encode())
+                return
+            if kind == "row":
+                self.mirror.put(msg["data"])
+                return
+            if kind == "synced":
+                for conv, title in msg.get("data") or []:
+                    self.mirror.set_title(conv, title)
+                self.notify("synced", None)
+                return
+            if msg.get("msg"):
+                self.mirror.put(msg["msg"])
+        if kind in ("hello", "row", "synced"):
+            return
         if kind == "sent":
             fut = self._pending.pop(msg.get("req"), None)
             if fut and not fut.done():

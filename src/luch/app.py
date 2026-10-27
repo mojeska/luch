@@ -5,6 +5,8 @@ import argparse
 import asyncio
 import json
 import logging
+import re
+import socket
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,7 @@ from textual.widgets.option_list import Option
 
 from .daemon import default_socket_path, run_daemon, socket_alive
 from .radio import CONTACT_REPEATER, CONTACT_ROOM, CONTACT_SENSOR, Radio, RadioState
-from .remote import RemoteRadio
+from .remote import RemoteRadio, logger_host
 from . import firmware, service
 from .blepair import valid_pin
 from .i18n import subtitle, tr
@@ -110,12 +112,14 @@ class LuchApp(App):
 
     def __init__(self, device: str, db_path: Path, offline: bool = False,
                  port: str | None = None, via_logger: bool = False, tcp: str | None = None,
-                 pin: str | None = None):
+                 pin: str | None = None, mirror_path: Path | None = None):
+        """`mirror_path`: the logger runs on another machine; keep a copy of its log here."""
         super().__init__()
-        self.store = Store(db_path)
+        self.store = Store(mirror_path or db_path)
         self.via_logger = via_logger
         if via_logger:
-            self.radio = RemoteRadio(default_socket_path(db_path), self.on_radio)
+            self.radio = RemoteRadio(default_socket_path(db_path), self.on_radio,
+                                     mirror=self.store if mirror_path else None)
         else:
             self.radio = Radio(device, self.store, self.on_radio, port=port, tcp=tcp, pin=pin)
         self.offline = offline
@@ -263,6 +267,11 @@ class LuchApp(App):
                 self.event("ПРИЁМ ◄ ", msg.conv, f" · {msg.sender}")
             self.rebuild_convs()
             self.render_status()
+        elif kind == "synced":  # a remote logger's backlog has landed in the mirror
+            self.rebuild_convs()
+            self.render_status()
+            if self.current and not self.searching:
+                self.show_conv(self.current)
         elif kind == "updated":
             msg = self.store.get(data)
             if msg and msg.status == "delivered":
@@ -884,6 +893,16 @@ def radio_slug(name: str) -> str:
     return re.sub(r"^meshcore-", "", slug) or "luch"
 
 
+def mirror_path_for(db: Path) -> Path | None:
+    """Where to keep a copy of the logger's log when the logger runs on another machine
+    (its socket forwarded over ssh), since its SQLite file isn't on this disk."""
+    host = asyncio.run(logger_host(default_socket_path(db)))
+    if not host or host.split(".")[0].lower() == socket.gethostname().split(".")[0].lower():
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", host.split(".")[0].lower()).strip("-") or "remote"
+    return db.with_name(f"{db.stem}@{slug}.db")
+
+
 def find_logger_db(data_dir: Path) -> Path | None:
     """The database of the one running logger, so plain `luch` connects to it."""
     alive = [p for p in sorted(data_dir.glob("*.sock")) if asyncio.run(socket_alive(p))]
@@ -984,7 +1003,7 @@ def main() -> None:
     via_logger = (not args.offline and not args.direct
                   and asyncio.run(socket_alive(default_socket_path(args.db))))
     app = LuchApp(device, args.db, offline=args.offline, port=args.port, via_logger=via_logger, tcp=args.tcp,
-                  pin=args.pin)
+                  pin=args.pin, mirror_path=mirror_path_for(args.db) if via_logger else None)
     if args.english:
         app.lang = "en"
     app.run()

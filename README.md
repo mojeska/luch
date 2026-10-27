@@ -153,6 +153,26 @@ On macOS it runs as a launchd agent, on Linux as a systemd user service: starts 
 
 Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u luch -f` on Linux. To keep the Linux service running while logged out: `loginctl enable-linger $USER`.
 
+### From another computer
+
+The logger can run on the machine the radio is attached to, with the screen on a different one. Forward the logger's socket over ssh, from the computer you'll read on:
+
+```sh
+ssh -N -L ~/.local/share/luch/mynode.sock:/home/you/.local/share/luch/mynode.sock radio-host
+```
+
+The right-hand path is on the logger's machine. Use the full path, since `~` isn't expanded there; on macOS it starts with `/Users/you`. Then run plain `luch`: it finds the forwarded socket like a local one.
+
+The logger's SQLite file isn't on this computer, so the screen keeps its own copy, `~/.local/share/luch/mynode@<logger host>.db`. It catches up on everything it missed each time it connects. Read marks and tags are kept in that copy, separate from the logger's. Both machines need this version of LUCH.
+
+Two ssh options help. Without them, a tunnel that ended badly leaves a socket file behind and the next `ssh -L` fails with "Address already in use", or ssh stays running with no forward. Add them to `~/.ssh/config`:
+
+```
+Host radio-host
+  StreamLocalBindUnlink yes   # replace a leftover socket file
+  ExitOnForwardFailure yes    # quit if the forward can't be set up
+```
+
 ## Keys and commands
 
 | | |
