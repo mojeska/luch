@@ -964,7 +964,8 @@ def main() -> None:
         app.lang = "en"
     app.run()
     if app.farewell:
-        print(f"\033[1;38;2;255;233;168;48;2;200;38;30m {app.farewell} \033[0m")
+        print(f"\033[1;38;2;255;233;168;48;2;200;38;30m {app.farewell} \033[0m"
+              f"\033[1;38;2;255;215;0;48;2;0;87;183m FREE UKRAINE! \033[0m")
 
 
 if __name__ == "__main__":
