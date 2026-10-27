@@ -18,9 +18,36 @@ Terminal client for a [MeshCore](https://github.com/meshcore-dev/MeshCore) Compa
 
 </details>
 
-Built on [meshcore_py](https://github.com/meshcore-dev/meshcore_py) and [Textual](https://github.com/Textualize/textual). Runs on macOS and Linux. Tested on macOS with a Heltec V3.
+Built on [meshcore_py](https://github.com/meshcore-dev/meshcore_py) and [Textual](https://github.com/Textualize/textual). Runs on macOS and Linux; see [Tested hardware](#tested-hardware) for what has actually been tried.
 
 Screen text is Russian with English hints; **Ctrl+T** switches it all to English, see the tip above.
+
+## Tested hardware
+
+LUCH has been used with these radios, on a Mac (macOS, Apple silicon):
+
+| Radio | Firmware | Bluetooth | Wi-Fi | USB | GPS |
+| --- | --- | --- | --- | --- | --- |
+| Heltec WiFi LoRa 32 **V3** (ESP32-S3) | MeshCore Companion BLE 1.17.1, 1.18.0 | ✅ | ✅ (1.18.0) | not tried | no GPS on board |
+| Seeed **Wio Tracker L1 Pro** (nRF52840) | MeshCore Companion BLE 1.17.1, 1.18.0 | ✅ | not on this board | not tried | ✅ |
+
+What that covers: messages on channels and DMs, the background logger (over Bluetooth and over Wi-Fi), channels, favourites, renaming a node, the firmware check, GPS position and weather. Firmware was updated on both with the steps in [Updating firmware](#updating-firmware).
+
+**Not tested yet:**
+
+- **Other boards.** LUCH talks to the radio through [meshcore_py](https://github.com/meshcore-dev/meshcore_py), the same protocol the MeshCore phone app uses, so any board running MeshCore **Companion** firmware should work. Repeater and room-server firmware won't. What a board offers (Wi-Fi, GPS, a screen, battery reporting) varies, and LUCH only shows what the radio reports.
+- **USB.** The code is there (`--port`), but no USB Companion build has been tried. A board flashed with the BLE build does not answer over USB.
+- **Linux with a real radio.** The automated tests run on Ubuntu, but Bluetooth, USB and the systemd logger haven't been used with hardware on Linux (Omarchy is next).
+- **Firmware before 1.17.** `/cli`, Wi-Fi and `/name` need 1.18.
+
+Tried LUCH on another radio? Please open an issue with the board, firmware version, and what worked, so it can go in this table.
+
+## Updating firmware
+
+LUCH tells you when a newer Companion release is out (`/firmware`). The [MeshCore web flasher](https://meshcore.io/flasher) is the easy way to update. What was done here, keeping contacts, channels and keys:
+
+- **ESP32 boards (Heltec V3):** back up the whole flash with `esptool read-flash 0 0x800000 backup.bin`, then write only the app with `esptool write-flash 0x10000 <board>_companion_radio_ble-<ver>.bin` (not the `-merged` image). The Heltec's USB serial chip needed `--baud 115200`; faster speeds gave serial errors.
+- **nRF52 boards (Wio Tracker L1):** double-press reset, and the board appears as a USB drive (`TRACKER L1`); copy the `.uf2` onto it. Save `CURRENT.UF2` from the drive first as a fallback.
 
 ## Install
 
@@ -84,7 +111,7 @@ Each radio gets its own log, `~/.local/share/luch/<radio>.db`, named from `-d` (
 
 ## Wi-Fi
 
-Companion firmware 1.18+ on some boards (Heltec V3, V4, Xiao S3, RAK3112 and others) runs Wi-Fi alongside Bluetooth. This asks for the network and password (2.4 GHz), stores them on the radio and reboots it:
+Companion firmware 1.18+ on some boards runs Wi-Fi alongside Bluetooth. Tested on the Heltec V3; MeshCore's release notes also list the Heltec V4, Xiao S3, RAK3112 and others. This asks for the network and password (2.4 GHz), stores them on the radio and reboots it:
 
 ```sh
 .venv/bin/luch wifi -d MeshCore-MyNode
@@ -100,7 +127,7 @@ The phone and the logger can then be connected at once. Messages the radio queue
 
 ## GPS and weather
 
-On a radio with GPS (Wio Tracker L1, T1000-E, Heltec Wireless Tracker and others), `/gps on 60` turns it on with a fix every 60 seconds, and the status panel shows the position. Without a fix, LUCH uses the position stored on the radio, then a home position you set with `/home <lat> <lon>`. Current weather for that position comes from [Open-Meteo](https://open-meteo.com) (no key needed), refreshed every 15 minutes or when you move about 1 km. `/units metric` switches from °F and mph.
+On a radio with GPS (tested on the Wio Tracker L1 Pro; MeshCore also builds GPS support for the T1000-E, Heltec Wireless Tracker and others), `/gps on 60` turns it on with a fix every 60 seconds, and the status panel shows the position. Without a fix, LUCH uses the position stored on the radio, then a home position you set with `/home <lat> <lon>`. Current weather for that position comes from [Open-Meteo](https://open-meteo.com) (no key needed), refreshed every 15 minutes or when you move about 1 km. `/units metric` switches from °F and mph.
 
 Turning GPS on doesn't share your position: the radio only puts it in its adverts when its location policy says so.
 
