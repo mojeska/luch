@@ -79,6 +79,12 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 | Enter | Transmit on the selected channel or contact |
 | `/dm <name>` | Open a direct line to a contact |
 | `/search <words>` | Search every logged message |
+| `/join #name` | Join a hashtag channel (the key comes from the name) |
+| `/join <name> <key>` | Join a private channel (key: 32 hex characters or base64) |
+| `/leave [#name]` | Leave a channel (default: the one on screen; Public stays) |
+| `/fav [name]` / `/unfav [name]` | Favourite a contact on the radio (default: the one on screen) |
+| `/tag <name> <tag>` / `/untag <name> <tag>` | Tag a contact (stored in LUCH only) |
+| `/tags [tag]` | List tags, or the contacts carrying one |
 | `/firmware` | Radio firmware vs the newest MeshCore Companion release |
 | Ctrl+T | Russian / English screen text |
 | Ctrl+B | Show / hide Misha |
@@ -93,7 +99,8 @@ Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u 
 - **USB needs USB firmware.** MeshCore Companion builds have one interface: a BLE build won't answer over USB. Flash the USB Companion build to use `--port`.
 - **Log:** `~/.local/share/luch/luch.db` (`--db` to change). Table `messages`, one row per message, duplicates ignored.
 - **Queue:** with nothing connected, the radio keeps a small queue of messages, pulled in on the next connect. Overflow is lost.
-- **Sidebar:** channels, room servers, and contacts with logged traffic. Repeaters and sensors are left out. `/dm` reaches anyone else.
+- **Sidebar:** channels, then ★ favourites, then room servers and contacts with logged traffic or tags. Repeaters and sensors are left out. `/dm` reaches anyone else.
+- **Favourites** use the radio's own flag, so the phone app sees them too, and the radio never drops a favourite when its contact list fills up. **Tags** live only in LUCH's database.
 - **Misha (МИША):** a cosmonaut bear in the status column who reacts to the radio: waves at new messages, points up when a DM is delivered, and clutches his helmet when the link drops or the battery runs low (СЛАБОЕ ЗАЖИГАНИЕ, "weak ignition"). An homage to the diagnostic-screen mascot in *Red Planet* (2000), drawn from scratch.
 - **Firmware check:** on connect, LUCH compares the radio's firmware with the newest Companion release on GitHub (cached 6 hours) and shows ▲ NEW in the status panel when there's an update. Update with the [MeshCore web flasher](https://meshcore.io/flasher).
 - **Delivery:** DMs show ДОСТАВЛЕНО (delivered) on ACK, НЕТ ПОДТВ. (no ack) after the timeout.

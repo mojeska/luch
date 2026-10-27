@@ -40,6 +40,14 @@ HELP = [
     "  text + Enter        transmit on the selected channel or contact",
     "  /dm <name>          open a direct line to a contact (part of the name is enough)",
     "  /search <words>     search every logged message",
+    "  /join #name         join a hashtag channel (key comes from the name)",
+    "  /join <name> <key>  join a private channel (32 hex chars or base64)",
+    "  /leave [#name]      leave a channel (default: the one on screen)",
+    "  /fav [name]         favourite a contact, on the radio (default: the one on screen)",
+    "  /unfav [name]       remove the favourite",
+    "  /tag <name> <tag>   tag a contact (LUCH only; tag is one word)",
+    "  /untag <name> <tag> remove a tag",
+    "  /tags [tag]         list tags, or the contacts with one tag",
     "  /help               this list",
     "  Tab / Shift+Tab     move between panels",
     "  Ctrl+N / Ctrl+P     next / previous conversation",
@@ -276,11 +284,16 @@ class LuchApp(App):
         # Hundreds of contacts get auto-added from adverts; list only rooms, contacts with
         # logged traffic, and ones opened with /dm.
         talked = self.store.dm_convs_with_traffic()
+        tagged = self.store.tagged_convs()
         seen = set()
+        for c in self.state.contacts:  # favourites first, whether or not there's traffic
+            if c.favourite and c.type not in (CONTACT_REPEATER, CONTACT_SENSOR):
+                convs.append((c.conv, f"★ {c.name.upper()}", "fav"))
+                seen.add(c.conv)
         for c in self.state.contacts:
-            if c.type in (CONTACT_REPEATER, CONTACT_SENSOR):
+            if c.conv in seen or c.type in (CONTACT_REPEATER, CONTACT_SENSOR):
                 continue
-            if c.type != CONTACT_ROOM and c.conv not in talked and c.conv not in self.pinned:
+            if c.type != CONTACT_ROOM and not ({c.conv} & (talked | tagged | self.pinned)):
                 continue
             tag = self.t("КОМ" if c.type == CONTACT_ROOM else "АБН")
             convs.append((c.conv, f"{tag} {c.name.upper()}", "dm"))
@@ -302,7 +315,8 @@ class LuchApp(App):
         last_group = None
         for conv, label, group in convs:
             if group != last_group:
-                head = f"── {self.t('КАНАЛЫ' if group == 'chan' else 'АБОНЕНТЫ')} ".ljust(20, "─")
+                name = {"chan": "КАНАЛЫ", "fav": "ИЗБРАННЫЕ", "dm": "АБОНЕНТЫ"}[group]
+                head = f"── {self.t(name)} ".ljust(20, "─")
                 ol.add_option(Option(Text(head, style="#c8261e"), disabled=True))
                 last_group = group
             n = self.store.unread(conv)
@@ -339,7 +353,8 @@ class LuchApp(App):
         log = self.query_one("#log", RichLog)
         log.clear()
         log.border_title = f"{self.t('ЖУРНАЛ СВЯЗИ')} · {self.label_of(conv)}"
-        log.border_subtitle = subtitle("COMMS LOG", self.lang)
+        tags = self.store.tags_for(conv)
+        log.border_subtitle = ("#" + " #".join(tags)) if tags else subtitle("COMMS LOG", self.lang)
         history = self.store.history(conv)
         self._log_empty = not history
         if not history:
@@ -433,6 +448,16 @@ class LuchApp(App):
         if text.startswith("/dm "):
             self.open_dm(text[4:].strip())
             return
+        cmd, _, rest = text.partition(" ")
+        handler = {"/join": self.cmd_join, "/leave": self.cmd_leave, "/fav": self.cmd_fav,
+                   "/unfav": self.cmd_unfav, "/tag": self.cmd_tag, "/untag": self.cmd_untag,
+                   "/tags": self.cmd_tags}.get(cmd)
+        if handler:
+            try:
+                await handler(rest.strip())
+            except Exception as e:
+                self.note(f"── {self.t('СБОЙ')} · {e} ──", "#ff4a3d")
+            return
         if text.startswith("/search "):
             self.do_search(text[8:].strip())
             return
@@ -453,23 +478,114 @@ class LuchApp(App):
                 self.query_one(Mascot).react("point", 3, say="sent")
         self.render_status()
 
-    def open_dm(self, name: str) -> None:
+    def note(self, line: str, style: str = "#c9a64a") -> None:
+        self.query_one("#log", RichLog).write(Text(line, style=style))
+
+    def find_contact(self, name: str, quiet: bool = False):
+        """One person/room contact by full or partial name; explains in the log when it can't."""
         people = [c for c in self.state.contacts if c.type not in (CONTACT_REPEATER, CONTACT_SENSOR)]
         exact = [c for c in people if c.name.lower() == name.lower()]
         hits = exact or [c for c in people if name.lower() in c.name.lower()]
-        if len(hits) != 1:
-            log = self.query_one("#log", RichLog)
+        if len(hits) == 1:
+            return hits[0]
+        if not quiet:
             if not hits:
-                log.write(Text(f"── {self.t('АБОНЕНТ НЕ НАЙДЕН')} · no contact matches '{name}' ──", style="#ff4a3d"))
+                self.note(f"── {self.t('АБОНЕНТ НЕ НАЙДЕН')} · no contact matches '{name}' ──", "#ff4a3d")
             else:
-                log.write(Text(f"── {len(hits)} {self.t('СОВПАДЕНИЙ')} · be more specific: ──", style="#c9a64a"))
+                self.note(f"── {len(hits)} {self.t('СОВПАДЕНИЙ')} · be more specific: ──")
                 for c in hits[:15]:
-                    log.write(Text(f"   {c.name}", style="#c9a64a"))
+                    self.note(f"   {c.name}")
+        return None
+
+    def contact_arg(self, name: str):
+        """The named contact, or the one on screen when no name is given."""
+        if name:
+            return self.find_contact(name)
+        c = next((c for c in self.state.contacts if c.conv == self.current), None)
+        if c is None:
+            self.note("── open a contact first, or give a name ──", "#ff4a3d")
+        return c
+
+    def open_dm(self, name: str) -> None:
+        c = self.find_contact(name)
+        if not c:
             return
-        self.pinned.add(hits[0].conv)
+        self.pinned.add(c.conv)
         self.rebuild_convs()
-        self.show_conv(hits[0].conv)
+        self.show_conv(c.conv)
         self.rebuild_convs()
+
+    async def cmd_join(self, rest: str) -> None:
+        name, _, key = rest.partition(" ")
+        if not name:
+            raise ValueError("/join #name  or  /join <name> <key>")
+        idx = await self.radio.join_channel(name, key.strip() or None)
+        self.event("КАНАЛ ДОБАВЛЕН ", free=f"{self.t('К-')}{idx:02d} {name}")
+        self.show_conv(f"chan:{idx}")
+        self.rebuild_convs()
+
+    async def cmd_leave(self, rest: str) -> None:
+        if rest:
+            ch = next((c for c in self.state.channels if c.name.lower() == rest.lower()), None)
+        else:
+            ch = next((c for c in self.state.channels if c.conv == self.current), None)
+        if ch is None:
+            raise ValueError("NO SUCH CHANNEL (name it, or open it first)")
+        await self.radio.leave_channel(ch.idx)
+        self.event("КАНАЛ УДАЛЁН ", free=ch.name)
+        self.show_conv("chan:0")
+        self.rebuild_convs()
+
+    async def _set_fav(self, rest: str, on: bool) -> None:
+        c = self.contact_arg(rest)
+        if not c:
+            return
+        await self.radio.set_favourite(c.public_key, on)
+        self.event("В ИЗБРАННОМ " if on else "УБРАН ИЗ ИЗБРАННОГО ", free=c.name)
+        self.rebuild_convs()
+
+    async def cmd_fav(self, rest: str) -> None:
+        await self._set_fav(rest, True)
+
+    async def cmd_unfav(self, rest: str) -> None:
+        await self._set_fav(rest, False)
+
+    def _tag_args(self, rest: str):
+        """'<name> <tag>' where the tag is the last word; name may be omitted for the contact on screen."""
+        parts = rest.split()
+        if not parts:
+            raise ValueError("/tag <name> <tag>")
+        tag = parts[-1].lstrip("#").lower()
+        return self.contact_arg(" ".join(parts[:-1])), tag
+
+    async def cmd_tag(self, rest: str) -> None:
+        c, tag = self._tag_args(rest)
+        if c:
+            self.store.add_tag(c.conv, tag)
+            self.store.set_title(c.conv, c.name)
+            self.event("МЕТКА ", free=f"#{tag} · {c.name}")
+            self.rebuild_convs()
+            if self.current == c.conv:
+                self.show_conv(c.conv)
+
+    async def cmd_untag(self, rest: str) -> None:
+        c, tag = self._tag_args(rest)
+        if c and self.store.remove_tag(c.conv, tag):
+            self.event("МЕТКА СНЯТА ", free=f"#{tag} · {c.name}")
+            self.rebuild_convs()
+            if self.current == c.conv:
+                self.show_conv(c.conv)
+
+    async def cmd_tags(self, rest: str) -> None:
+        tags = self.store.all_tags()
+        want = rest.lstrip("#").lower()
+        if want:
+            tags = {want: tags.get(want, [])}
+        if not any(tags.values()):
+            self.note(f"── {self.t('НЕТ МЕТОК')} ──", "#5f5532")
+            return
+        for tag, convs in tags.items():
+            self.note(f"#{tag}: " + ", ".join(self.label_of(c) for c in convs))
 
     def do_search(self, needle: str) -> None:
         self.searching = True

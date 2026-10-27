@@ -34,10 +34,15 @@ class Contact:
     type: int
     last_advert: int
     path_len: int
+    flags: int = 0  # bit 0 = favourite (kept on the radio, shared with the phone app)
 
     @property
     def conv(self) -> str:
         return f"dm:{self.public_key[:12]}"
+
+    @property
+    def favourite(self) -> bool:
+        return bool(self.flags & 1)
 
 
 @dataclass
@@ -79,6 +84,23 @@ def find_usb_port() -> str | None:
     return None
 
 
+def parse_secret(text: str) -> bytes:
+    """A private channel key: 32 hex characters or base64 of 16 bytes."""
+    import base64
+    import binascii
+    t = text.strip()
+    try:
+        b = bytes.fromhex(t)
+    except ValueError:
+        try:
+            b = base64.b64decode(t, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError("KEY MUST BE 32 HEX CHARS OR BASE64") from None
+    if len(b) != 16:
+        raise ValueError("KEY MUST BE 16 BYTES")
+    return b
+
+
 def split_channel_text(text: str) -> tuple[str, str]:
     """Channel messages arrive as 'Sender: text'."""
     name, sep, body = text.partition(": ")
@@ -98,6 +120,7 @@ class Radio:
         self.state = RadioState()
         self.mc: MeshCore | None = None
         self._lost = asyncio.Event()
+        self.max_channels = 8
         self._stop = False
 
     # ---------------------------------------------------------------- connection loop
@@ -165,7 +188,8 @@ class Radio:
         s.sf = info.get("radio_sf", 0)
         s.tx_power = info.get("tx_power", 0)
         s.firmware = dev_info.get("ver", "") or dev_info.get("fw_build", "")
-        s.channels = await self._load_channels(dev_info.get("max_channels", 8))
+        self.max_channels = dev_info.get("max_channels", 8) or 8
+        s.channels = await self._load_channels(self.max_channels)
         for ch in s.channels:
             self.store.set_title(ch.conv, ch.name)
         await self._load_contacts()
@@ -228,7 +252,7 @@ class Radio:
         for c in self.mc.contacts.values():
             contacts.append(Contact(
                 c["public_key"], c.get("adv_name") or c["public_key"][:12], c.get("type", 0),
-                c.get("last_advert", 0), c.get("out_path_len", -1),
+                c.get("last_advert", 0), c.get("out_path_len", -1), c.get("flags", 0),
             ))
             self.store.set_title(f"dm:{c['public_key'][:12]}", c.get("adv_name") or c["public_key"][:12])
         contacts.sort(key=lambda c: c.name.lower())
@@ -285,6 +309,61 @@ class Radio:
         self._lost.set()
 
     # ---------------------------------------------------------------- outgoing
+    # ---------------------------------------------------------------- channels and favourites
+    def _need_link(self) -> None:
+        if not self.mc or not self.state.connected:
+            raise RuntimeError("NO LINK")
+
+    async def join_channel(self, name: str, secret: str | None = None) -> int:
+        """Add a channel in the first free slot. '#name' channels need no key."""
+        self._need_link()
+        name = name.strip()
+        if not name or len(name.encode()) > 31:
+            raise ValueError("CHANNEL NAME MUST BE 1-31 BYTES")
+        if not name.startswith("#") and not secret:
+            raise ValueError("PRIVATE CHANNEL NEEDS A KEY (or use a #name)")
+        if any(c.name.lower() == name.lower() for c in self.state.channels):
+            raise ValueError(f"ALREADY ON {name}")
+        used = {c.idx for c in self.state.channels}
+        free = next((i for i in range(self.max_channels) if i not in used), None)
+        if free is None:
+            raise ValueError("NO FREE CHANNEL SLOT")
+        key = parse_secret(secret) if secret else None
+        ev = await self.mc.commands.set_channel(free, name, key)
+        if ev.type != EventType.OK:
+            raise RuntimeError(f"RADIO REFUSED: {ev.payload}")
+        await self._refresh_channels()
+        return free
+
+    async def leave_channel(self, idx: int) -> None:
+        self._need_link()
+        if idx == 0:
+            raise ValueError("PUBLIC (К-00) STAYS")
+        if idx not in {c.idx for c in self.state.channels}:
+            raise ValueError(f"NO CHANNEL {idx}")
+        ev = await self.mc.commands.set_channel(idx, "", bytes(16))
+        if ev.type != EventType.OK:
+            raise RuntimeError(f"RADIO REFUSED: {ev.payload}")
+        await self._refresh_channels()
+
+    async def _refresh_channels(self) -> None:
+        self.state.channels = await self._load_channels(self.max_channels)
+        for ch in self.state.channels:
+            self.store.set_title(ch.conv, ch.name)
+        self.notify("state", self.state)
+
+    async def set_favourite(self, public_key: str, on: bool) -> None:
+        self._need_link()
+        contact = self.mc.contacts.get(public_key)
+        if contact is None:
+            raise ValueError("CONTACT NOT ON RADIO")
+        flags = (contact.get("flags", 0) & ~1) | (1 if on else 0)  # upper bits are telemetry permissions
+        ev = await self.mc.commands.change_contact_flags(contact, flags)
+        if ev.type != EventType.OK:
+            raise RuntimeError(f"RADIO REFUSED: {ev.payload}")
+        await self._load_contacts()
+        self.notify("state", self.state)
+
     async def send(self, conv: str, text: str) -> int | None:
         if not self.mc or not self.state.connected:
             raise RuntimeError("NO LINK")

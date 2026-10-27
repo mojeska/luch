@@ -21,6 +21,8 @@ from .store import Store
 
 log = logging.getLogger("luch.daemon")
 
+CALLABLE = {"join_channel", "leave_channel", "set_favourite"}  # radio methods screens may call
+
 
 def default_socket_path(db_path: Path) -> Path:
     return db_path.parent / "luch.sock"
@@ -68,6 +70,13 @@ class Daemon:
                     reply = {"kind": "sent", "req": req.get("req"), "id": None, "error": None}
                     try:
                         reply["id"] = await self.radio.send(req["conv"], req["text"])
+                    except Exception as e:
+                        reply["error"] = str(e)
+                    writer.write((json.dumps(reply) + "\n").encode())
+                elif req.get("op") == "call" and req.get("method") in CALLABLE:
+                    reply = {"kind": "sent", "req": req.get("req"), "id": None, "error": None}
+                    try:
+                        reply["id"] = await getattr(self.radio, req["method"])(*req.get("args", []))
                     except Exception as e:
                         reply["error"] = str(e)
                     writer.write((json.dumps(reply) + "\n").encode())

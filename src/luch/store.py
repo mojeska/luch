@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_conv ON messages (conv, id);
 CREATE INDEX IF NOT EXISTS messages_ack ON messages (ack);
 
+CREATE TABLE IF NOT EXISTS tags (
+    conv TEXT NOT NULL,                     -- 'dm:<pubkey prefix>'
+    tag  TEXT NOT NULL,
+    UNIQUE (conv, tag)
+);
+
 CREATE TABLE IF NOT EXISTS conversations (
     conv         TEXT PRIMARY KEY,
     title        TEXT NOT NULL,
@@ -158,6 +164,28 @@ class Store:
     def dm_convs_with_traffic(self) -> set[str]:
         rows = self.db.execute("SELECT DISTINCT conv FROM messages WHERE conv LIKE 'dm:%'").fetchall()
         return {r[0] for r in rows}
+
+    def add_tag(self, conv: str, tag: str) -> None:
+        self.db.execute("INSERT OR IGNORE INTO tags (conv, tag) VALUES (?, ?)", (conv, tag.lower()))
+        self.db.commit()
+
+    def remove_tag(self, conv: str, tag: str) -> bool:
+        cur = self.db.execute("DELETE FROM tags WHERE conv = ? AND tag = ?", (conv, tag.lower()))
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def tags_for(self, conv: str) -> list[str]:
+        return [r[0] for r in self.db.execute("SELECT tag FROM tags WHERE conv = ? ORDER BY tag", (conv,))]
+
+    def all_tags(self) -> dict[str, list[str]]:
+        """tag -> conversations carrying it."""
+        out: dict[str, list[str]] = {}
+        for conv, tag in self.db.execute("SELECT conv, tag FROM tags ORDER BY tag, conv"):
+            out.setdefault(tag, []).append(conv)
+        return out
+
+    def tagged_convs(self) -> set[str]:
+        return {r[0] for r in self.db.execute("SELECT DISTINCT conv FROM tags")}
 
     def count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM messages").fetchone()[0]

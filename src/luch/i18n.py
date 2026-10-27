@@ -3,6 +3,14 @@ from __future__ import annotations
 
 # Composite "RU · EN" phrases first, so English mode doesn't say things twice.
 EN = {
+    "УБРАН ИЗ ИЗБРАННОГО": "UNFAVOURITED",
+    "КАНАЛ ДОБАВЛЕН": "CHANNEL ADDED",
+    "КАНАЛ УДАЛЁН": "CHANNEL REMOVED",
+    "В ИЗБРАННОМ": "FAVOURITED",
+    "ИЗБРАННЫЕ": "FAVOURITES",
+    "МЕТКА СНЯТА": "TAG REMOVED",
+    "НЕТ МЕТОК": "NO TAGS",
+    "МЕТКА": "TAG",
     "ПРИВЕТ! НОВОЕ СООБЩЕНИЕ": "HELLO! NEW MESSAGE",
     "СЛАБОЕ ЗАЖИГАНИЕ": "WEAK IGNITION",
     "ВСЁ В НОРМЕ": "ALL NOMINAL",

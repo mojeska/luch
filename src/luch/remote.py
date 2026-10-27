@@ -61,15 +61,27 @@ class RemoteRadio:
             data = self.state
         self.notify(kind, data)
 
-    async def send(self, conv: str, text: str) -> int | None:
+    async def _request(self, body: dict) -> Any:
         if not self._writer:
             raise RuntimeError("NO LINK TO LOGGER")
         req = next(self._ids)
         fut = asyncio.get_running_loop().create_future()
         self._pending[req] = fut
-        self._writer.write((json.dumps({"op": "send", "req": req, "conv": conv, "text": text}) + "\n").encode())
+        self._writer.write((json.dumps({**body, "req": req}) + "\n").encode())
         await self._writer.drain()
         return await asyncio.wait_for(fut, 30)
+
+    async def send(self, conv: str, text: str) -> int | None:
+        return await self._request({"op": "send", "conv": conv, "text": text})
+
+    async def join_channel(self, name: str, secret: str | None = None) -> int:
+        return await self._request({"op": "call", "method": "join_channel", "args": [name, secret]})
+
+    async def leave_channel(self, idx: int) -> None:
+        await self._request({"op": "call", "method": "leave_channel", "args": [idx]})
+
+    async def set_favourite(self, public_key: str, on: bool) -> None:
+        await self._request({"op": "call", "method": "set_favourite", "args": [public_key, on]})
 
     async def stop(self) -> None:
         self._stop = True
