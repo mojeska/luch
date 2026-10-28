@@ -249,6 +249,18 @@ LUCH_SOUND=off .venv/bin/python tools/screenshots.py docs/   # writes SVGs; conv
 .venv/bin/pip install pytest pytest-asyncio && .venv/bin/python -m pytest -q
 ```
 
+## Disclaimer
+
+LUCH is a hobby project, provided as is, with no warranty and no promises. Use it at your own risk.
+
+- It can lose messages. Don't rely on it for emergencies or anything where a missed or late message matters.
+- Commands that change the radio (Wi-Fi setup, channels, favourites, renaming) or the log (`reset`) do what they say; keep backups and check before you run them.
+- Firmware updates are your call and follow MeshCore's own instructions. A bad flash can leave a radio unusable until reflashed.
+- You're responsible for using your radio within your country's rules on frequencies, power and duty cycle.
+- LUCH isn't affiliated with or endorsed by MeshCore or any radio maker.
+
+The authors aren't liable for any damage, data loss or other harm from using it; the [LICENSE](LICENSE) has the full terms.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
