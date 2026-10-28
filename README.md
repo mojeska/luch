@@ -115,7 +115,7 @@ On Debian / Ubuntu the serial group is `dialout` instead of `uucp`.
 
 ## Windows
 
-LUCH runs on Windows 10 and 11 in [Windows Terminal](https://aka.ms/terminal), talking to the radio directly over Bluetooth, USB or Wi-Fi. The background logger (`luch logger`, `luch service`) isn't available on Windows yet. Tested on Windows 11 over Wi-Fi; USB and Bluetooth on Windows are untested so far.
+LUCH runs on Windows 10 and 11 in [Windows Terminal](https://aka.ms/terminal), over Bluetooth, USB or Wi-Fi, with the background logger as a Task Scheduler task (see [Background logger](#background-logger)). Tested on Windows 11 over Wi-Fi; USB and Bluetooth on Windows are untested so far.
 
 ```powershell
 git clone https://github.com/mojeska/luch.git; cd luch
@@ -155,7 +155,7 @@ Turning GPS on doesn't share your position: the radio only puts it in its advert
 
 ## Background logger
 
-On macOS it runs as a launchd agent, on Linux as a systemd user service: starts at login, restarts if it stops, and owns the radio. `luch` then connects to the logger instead of the radio, so the log has no gaps. Status shows РЕЖИМ ЧЕРЕЗ ЛОГГЕР (via logger).
+On macOS it runs as a launchd agent, on Linux as a systemd user service, on Windows as a Task Scheduler task ("LUCH logger", started at login with no console window): starts at login, restarts if it stops, and owns the radio. `luch` then connects to the logger instead of the radio, so the log has no gaps. Status shows РЕЖИМ ЧЕРЕЗ ЛОГГЕР (via logger).
 
 ```sh
 .venv/bin/luch service install -d MeshCore-MyNode   # or: --port auto
@@ -165,7 +165,7 @@ On macOS it runs as a launchd agent, on Linux as a systemd user service: starts 
 .venv/bin/luch service uninstall
 ```
 
-Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u luch -f` on Linux. To keep the Linux service running while logged out: `loginctl enable-linger $USER`.
+Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u luch -f` on Linux, `%LOCALAPPDATA%\luch\logger.log` on Windows. On Windows, screens reach the logger on a local port with a key kept in `%LOCALAPPDATA%\luch\<radio>.sock` (Python has no Unix sockets there), so the [From another computer](#from-another-computer) ssh setup is macOS and Linux only. To keep the Linux service running while logged out: `loginctl enable-linger $USER`.
 
 ### From another computer
 
@@ -220,6 +220,7 @@ To restore, stop the logger (`luch service stop`), delete `<radio>.db` and its `
 | `/cli <command>` | Run a radio CLI command (firmware 1.18+), e.g. `/cli get wifi.ip` |
 | `/name <new name>` | Rename the node and announce it (Bluetooth name changes after `/reboot`) |
 | `/reboot` | Restart the radio; LUCH reconnects |
+| `/reconnect` | Connect to the radio again now, e.g. after another Wi-Fi client took it |
 | `/firmware` | Radio firmware vs the newest MeshCore Companion release |
 | **Ctrl+T** | **Yankee mode:** Russian / English screen text |
 | Ctrl+O | Collapse the channels and contacts list to a narrow strip, so the comms log gets the width; again or a click on the strip restores it (remembered; Ctrl+N / Ctrl+P still switch) |
@@ -237,6 +238,7 @@ To restore, stop the logger (`luch service stop`), delete `<radio>.db` and its `
 ## Notes
 
 - **One link at a time.** The radio takes one Bluetooth connection. Stop the logger (`luch service stop`) or close `luch` before using the phone app.
+- **Wi-Fi: the newest client wins.** A new connection makes the radio drop the old one. LUCH checks the radio still answers every 20 s, so a dropped link shows as lost within a minute. When the link keeps getting taken right after connecting, a screen stops and says RADIO TAKEN BY ANOTHER WI-FI CLIENT (`/reconnect` takes it back), and the logger waits 30 s, then longer each time, up to 10 minutes. Run one logger per radio.
 - **USB needs USB firmware.** MeshCore Companion builds have one interface: a BLE build won't answer over USB. Flash the USB Companion build to use `--port`.
 - **Log:** `~/.local/share/luch/<radio>.db` (`--db` to change). Table `messages`, one row per message, duplicates ignored.
 - **Queue:** with nothing connected, the radio keeps a small queue of messages, pulled in on the next connect. Overflow is lost.

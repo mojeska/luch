@@ -22,7 +22,7 @@ from textual.markup import escape as escape_markup
 from textual.widgets import Button, Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 
-from .daemon import UNIX_SOCKETS, default_socket_path, run_daemon, socket_alive
+from .daemon import default_socket_path, run_daemon, socket_alive
 from .radio import CONTACT_REPEATER, CONTACT_ROOM, CONTACT_SENSOR, Radio, RadioState
 from .remote import RemoteRadio, logger_host
 from . import firmware, service
@@ -1201,7 +1201,7 @@ def main() -> None:
                     help="file or folder to write to (default ~/.local/share/luch/backups/)")
     rs = sub.add_parser("reset", parents=[pick], help="delete every logged message (saves a backup first)")
     rs.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
-    svc = sub.add_parser("service", help="manage the background logger (launchd / systemd --user)")
+    svc = sub.add_parser("service", help="manage the background logger (launchd / systemd --user / Task Scheduler)")
     svc_sub = svc.add_subparsers(dest="action", required=True)
     svc_sub.add_parser("install", parents=[link], help="install and start at login")
     for name in ("uninstall", "start", "stop", "status"):
@@ -1226,9 +1226,6 @@ def main() -> None:
     args.db.parent.mkdir(parents=True, exist_ok=True)
     device = args.device or DEFAULT_DEVICE
 
-    if args.cmd in ("logger", "service") and not UNIX_SOCKETS:
-        raise SystemExit("the background logger doesn't run on Windows yet; "
-                         "run plain `luch` to talk to the radio directly")
     if args.cmd == "logger":
         run_daemon(device, args.db, args.port, args.tcp, args.pin)
         return

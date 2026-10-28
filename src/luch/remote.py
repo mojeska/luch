@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from .daemon import UNIX_SOCKETS
+from .daemon import open_logger
 from .radio import RadioState, state_from_dict
 from .store import Store
 
@@ -16,11 +16,8 @@ LINE_LIMIT = 16 * 1024 * 1024  # a state line with many contacts can pass asynci
 
 async def logger_host(sock_path: Path) -> str | None:
     """Hostname the logger behind this socket runs on (None for loggers too old to say)."""
-    if not UNIX_SOCKETS:
-        return None
     try:
-        reader, w = await asyncio.wait_for(
-            asyncio.open_unix_connection(str(sock_path), limit=LINE_LIMIT), 3)
+        reader, w = await asyncio.wait_for(open_logger(sock_path, limit=LINE_LIMIT), 3)
     except (OSError, asyncio.TimeoutError):
         return None
     try:
@@ -47,7 +44,7 @@ class RemoteRadio:
     async def run(self) -> None:
         while not self._stop:
             try:
-                reader, self._writer = await asyncio.open_unix_connection(str(self.sock_path), limit=LINE_LIMIT)
+                reader, self._writer = await open_logger(self.sock_path, limit=LINE_LIMIT)
             except OSError:
                 self.notify("status", "LOGGER NOT RUNNING · RETRY")
                 await asyncio.sleep(3)

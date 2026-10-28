@@ -1,19 +1,33 @@
 import asyncio
+import os
 import shutil
 import tempfile
 from pathlib import Path
 
 import pytest
 
+from luch import daemon as daemon_mod
 from luch.daemon import UNIX_SOCKETS, Daemon
 from luch.radio import Channel, RadioState
 from luch.remote import RemoteRadio
 
-pytestmark = pytest.mark.skipif(not UNIX_SOCKETS, reason="the logger needs Unix sockets (not on Windows yet)")
+
+
+@pytest.fixture(autouse=True, params=["unix", "localhost"])
+def transport(request, monkeypatch):
+    """Every test runs over the Unix socket (macOS, Linux) and the localhost port + key (Windows)."""
+    if request.param == "unix" and not UNIX_SOCKETS:
+        pytest.skip("no Unix sockets on Windows")
+    monkeypatch.setattr(daemon_mod, "UNIX_SOCKETS", request.param == "unix")
+    return request.param
+
+
+def tmpdir():
+    return Path(tempfile.mkdtemp(prefix="luch", dir=None if os.name == "nt" else "/tmp"))  # short socket paths
 
 
 async def test_logger_serves_state_messages_and_sends():
-    d = Path(tempfile.mkdtemp(prefix="luch", dir="/tmp"))  # unix socket paths must be short
+    d = tmpdir()
     try:
         daemon = Daemon("fake", d / "luch.db")
 
@@ -48,8 +62,11 @@ async def test_logger_serves_state_messages_and_sends():
         await client.stop()
         ctask.cancel()
         daemon.radio.stop = lambda: asyncio.sleep(0)
-        import os, signal
-        os.kill(os.getpid(), signal.SIGTERM)
+        if daemon_mod.UNIX_SOCKETS:
+            import signal
+            os.kill(os.getpid(), signal.SIGTERM)  # what launchd and systemd send
+        else:
+            daemon.request_stop()
         await asyncio.wait_for(task, 3)
         assert not daemon.sock_path.exists()
     finally:
@@ -59,7 +76,7 @@ async def test_logger_serves_state_messages_and_sends():
 async def test_screen_on_another_machine_mirrors_the_log():
     """Over an ssh-forwarded socket the screen can't read the logger's SQLite file, so it keeps a copy."""
     from luch.store import Store
-    d = Path(tempfile.mkdtemp(prefix="luch", dir="/tmp"))
+    d = tmpdir()
     try:
         daemon = Daemon("fake", d / "luch.db")
         old = daemon.store.add("chan:0", "in", "Ivan", "старое", 1)
@@ -111,7 +128,7 @@ async def test_screen_on_another_machine_mirrors_the_log():
 async def test_a_send_shows_on_the_other_screens():
     """A message sent from one screen reaches every other screen on the logger, not just the sender."""
     from luch.store import Store
-    d = Path(tempfile.mkdtemp(prefix="luch", dir="/tmp"))
+    d = tmpdir()
     try:
         daemon = Daemon("fake", d / "luch.db")
 
@@ -149,5 +166,28 @@ async def test_a_send_shows_on_the_other_screens():
             await c.stop()
         for t in tasks + [task]:
             t.cancel()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_localhost_logger_wants_the_key(monkeypatch, transport):
+    if transport != "localhost":
+        pytest.skip("only the localhost transport has a key")
+    d = tmpdir()
+    try:
+        daemon = Daemon("fake", d / "luch.db")
+        daemon.radio.run = lambda: asyncio.Event().wait()
+        task = asyncio.create_task(daemon.run())
+        await asyncio.sleep(0.2)
+        import json
+        info = json.loads(daemon.sock_path.read_text())
+        reader, writer = await asyncio.open_connection("127.0.0.1", info["port"])
+        writer.write(b'{"op": "auth", "key": "wrong"}\n')
+        assert await asyncio.wait_for(reader.readline(), 2) == b""  # dropped, no hello
+        assert await daemon_mod.socket_alive(daemon.sock_path)      # the right key works
+        daemon.request_stop()
+        await asyncio.wait_for(task, 3)
+        assert not daemon.sock_path.exists()
+        assert not await daemon_mod.socket_alive(daemon.sock_path)
     finally:
         shutil.rmtree(d, ignore_errors=True)
