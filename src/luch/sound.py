@@ -233,9 +233,12 @@ class Sound:
     def _play(self, path: Path) -> subprocess.Popen | _WinSound | None:
         if not self.player:
             return None
-        if self.player == ["winsound"]:
-            return _WinSound(path)
-        return subprocess.Popen(self.player + [str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:  # a missing or broken player means no sound, never a crash
+            if self.player == ["winsound"]:
+                return _WinSound(path)
+            return subprocess.Popen(self.player + [str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, RuntimeError):
+            return None
 
     def effect(self, name: str) -> None:
         """Play an effect unless muted; at most one every 0.4 s so a burst of messages doesn't chatter."""

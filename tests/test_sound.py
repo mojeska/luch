@@ -73,3 +73,10 @@ async def test_countdown_can_be_aborted(tmp_path):
         await pilot.press("escape")
         await pilot.pause(3.2)
         assert not app.sound.playing and not app.query_one("#countdown").display
+
+
+def test_missing_player_is_silent(tmp_path):
+    s = sound.Sound(tmp_path)
+    s.player = ["no-such-player-luch"]
+    s.tick()  # would raise FileNotFoundError before
+    assert s.play_anthem() is False
