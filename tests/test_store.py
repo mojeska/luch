@@ -40,3 +40,47 @@ def test_search():
 def test_split_channel_text():
     assert split_channel_text("Bob: hello: world") == ("Bob", "hello: world")
     assert split_channel_text("no sender here") == ("?", "no sender here")
+
+
+def test_backup_copies_everything(tmp_path):
+    s = Store(tmp_path / "live.db")
+    s.add("chan:0", "in", "Bob", "hi", 1)
+    s.add_tag("dm:abc", "family")
+    s.backup(tmp_path / "copy.db")
+    copy = Store(tmp_path / "copy.db")
+    assert [m.text for m in copy.history("chan:0")] == ["hi"]
+    assert copy.tags_for("dm:abc") == ["family"]
+
+
+def test_reset_clears_but_keeps_numbering(tmp_path):
+    s = Store(tmp_path / "live.db")
+    for i in range(3):
+        s.add("dm:abc", "in", "Bob", f"m{i}", i)
+    s.set_title("dm:abc", "Bob")
+    s.add_tag("dm:abc", "family")
+    other = Store(tmp_path / "live.db")  # e.g. the logger, still holding the file open
+    assert s.reset() == 3
+    assert s.count() == 0 and s.known_dms() == [] and s.all_tags() == {}
+    assert other.add("dm:abc", "in", "Bob", "after", 9) == 4  # screens fetching ids > 3 still see it
+    assert [m.text for m in s.since(3)] == ["after"]
+
+
+def test_reset_upgrades_an_old_log(tmp_path):
+    import sqlite3
+    old = sqlite3.connect(tmp_path / "old.db")
+    old.executescript(SCHEMA_V1)
+    old.execute("INSERT INTO messages (conv, direction, sender, text, sender_ts, rx_ts) "
+                "VALUES ('chan:0', 'in', 'Bob', 'x', 1, 1)")
+    old.commit()
+    old.close()
+    s = Store(tmp_path / "old.db")
+    s.reset()
+    assert s.add("chan:0", "in", "Bob", "y", 2) == 2
+
+
+SCHEMA_V1 = """
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY, conv TEXT NOT NULL, direction TEXT NOT NULL, sender TEXT NOT NULL,
+    text TEXT NOT NULL, sender_ts INTEGER NOT NULL, rx_ts INTEGER NOT NULL, snr REAL, rssi INTEGER,
+    path_len INTEGER, status TEXT NOT NULL DEFAULT '', ack TEXT, UNIQUE (conv, sender, sender_ts, text));
+"""

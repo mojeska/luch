@@ -8,7 +8,7 @@ from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
-    id          INTEGER PRIMARY KEY,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT, -- never reused, so a reset can't confuse screens
     conv        TEXT    NOT NULL,           -- 'chan:<idx>' or 'dm:<pubkey prefix>'
     direction   TEXT    NOT NULL,           -- 'in' or 'out'
     sender      TEXT    NOT NULL,
@@ -69,6 +69,36 @@ class Store:
 
     def close(self) -> None:
         self.db.close()
+
+    def backup(self, dest: Path | str) -> None:
+        """Write a complete copy to one file. Safe while the logger is writing."""
+        out = sqlite3.connect(str(dest))
+        try:
+            self.db.backup(out)
+        finally:
+            out.close()
+
+    def reset(self) -> int:
+        """Forget every message, tag and conversation. Returns how many messages went.
+        New messages keep numbering on from the old ones, since screens and remote copies
+        fetch by id and would skip anything below the last id they saw."""
+        gone, top = self.count(), self.max_id()
+        self.db.executescript(f"""
+            BEGIN IMMEDIATE;
+            DROP TABLE messages;
+            DELETE FROM tags;
+            DELETE FROM conversations;
+            {SCHEMA}
+            DELETE FROM sqlite_sequence WHERE name = 'messages';
+            INSERT INTO sqlite_sequence (name, seq) VALUES ('messages', {int(top)});
+            COMMIT;
+        """)
+        try:  # drop the deleted text from the file too; skipped if another screen is mid-read
+            self.db.execute("VACUUM")
+            self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.OperationalError:
+            pass
+        return gone
 
     def set_title(self, conv: str, title: str) -> None:
         self.db.execute(

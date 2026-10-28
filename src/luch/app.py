@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import socket
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1110,6 +1111,60 @@ async def wifi_setup(args) -> None:
     print("when it's back, `luch /cli get wifi.ip` or check your router; then connect with --tcp <ip>")
 
 
+def existing_log(db: Path) -> Path:
+    """The log to back up or reset; stops with the logs that do exist if this one doesn't."""
+    if db.exists():
+        return db
+    logs = sorted(db.parent.glob("*.db"))
+    hint = "".join(f"\n  --db {p}" for p in logs) or "\n  (none yet)"
+    raise SystemExit(f"no log at {db}. Pick one with --radio NAME or:{hint}")
+
+
+def backup_path(db: Path, dest: Path | None) -> Path:
+    """Where `luch backup` writes: the given file, or a dated file in the given folder
+    (by default ~/.local/share/luch/backups)."""
+    dest = (dest or db.parent / "backups").expanduser()
+    if dest.is_dir() or not dest.suffix:
+        dest.mkdir(parents=True, exist_ok=True)
+        base = f"{db.stem}-{time.strftime('%Y-%m-%d-%H%M%S')}"
+        dest, n = dest / f"{base}.db", 2
+        while dest.exists():
+            dest, n = dest.with_name(f"{base}-{n}.db"), n + 1
+    elif dest.exists():
+        raise SystemExit(f"{dest} already exists; pick another name")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    return dest
+
+
+def backup_log(db: Path, dest: Path | None) -> Path:
+    db, out = existing_log(db), backup_path(db, dest)
+    store = Store(db)
+    try:
+        store.backup(out)
+        print(f"backed up {store.count()} messages\n  from {db}\n  to   {out}")
+    finally:
+        store.close()
+    return out
+
+
+def reset_log(db: Path, yes: bool = False) -> None:
+    db = existing_log(db)
+    store = Store(db)
+    try:
+        n = store.count()
+        print(f"This deletes all {n} messages, tags and remembered contacts in\n  {db}\n"
+              "Contacts stored on the radio stay; they come back on the next connect.")
+        if not yes and input("Type yes to reset: ").strip().lower() != "yes":
+            raise SystemExit("cancelled, nothing changed")
+        out = backup_path(db, None)
+        store.backup(out)
+        print(f"saved a backup first: {out}")
+        store.reset()
+        print(f"reset: {n} messages deleted. Restart any open luch screens to clear them too.")
+    finally:
+        store.close()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="luch", description="ЛУЧ: MeshCore terminal over Bluetooth, USB or Wi-Fi")
     link = argparse.ArgumentParser(add_help=False)
@@ -1127,6 +1182,15 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("logger", parents=[link], help="run the background logger in the foreground")
     sub.add_parser("wifi", parents=[link], help="put the radio on Wi-Fi (asks for SSID and password)")
+    pick = argparse.ArgumentParser(add_help=False)
+    pick.add_argument("-d", "--device", help="radio whose log to use, e.g. MeshCore-Mojeska")
+    pick.add_argument("--radio", help="name of the radio's log (default: the running logger's)")
+    pick.add_argument("--db", type=Path, help="path to the SQLite log")
+    bk = sub.add_parser("backup", parents=[pick], help="copy the message log to a backup file")
+    bk.add_argument("dest", nargs="?", type=Path,
+                    help="file or folder to write to (default ~/.local/share/luch/backups/)")
+    rs = sub.add_parser("reset", parents=[pick], help="delete every logged message (saves a backup first)")
+    rs.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
     svc = sub.add_parser("service", help="manage the background logger (launchd / systemd --user)")
     svc_sub = svc.add_subparsers(dest="action", required=True)
     svc_sub.add_parser("install", parents=[link], help="install and start at login")
@@ -1145,7 +1209,7 @@ def main() -> None:
         name = getattr(args, "radio", None) or (args.device and radio_slug(args.device))
         if name:
             args.db = data_dir / f"{radio_slug(name)}.db"
-        elif args.cmd is None and not args.offline and (found := find_logger_db(data_dir)):
+        elif args.cmd in (None, "backup", "reset") and not args.offline and (found := find_logger_db(data_dir)):
             args.db = found
         else:
             args.db = default_db_path()
@@ -1154,6 +1218,12 @@ def main() -> None:
 
     if args.cmd == "logger":
         run_daemon(device, args.db, args.port, args.tcp, args.pin)
+        return
+    if args.cmd == "backup":
+        backup_log(args.db, args.dest)
+        return
+    if args.cmd == "reset":
+        reset_log(args.db, args.yes)
         return
     if args.cmd == "wifi":
         asyncio.run(wifi_setup(args))

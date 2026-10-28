@@ -231,3 +231,25 @@ async def test_titles_keep_their_buttons_when_narrow(tmp_path):
         for wid in ("#convs", "#log", "#status"):
             w = app.query_one(wid)
             assert "[+]" in rows[w.region.y].text[w.region.x:w.region.right], wid
+
+
+def test_backup_and_reset_commands(tmp_path, monkeypatch, capsys):
+    import pytest
+    from luch.app import backup_log, reset_log
+    from luch.store import Store
+    db = tmp_path / "mynode.db"
+    s = Store(db)
+    s.add("chan:0", "in", "Bob", "hi", 1)
+    s.close()
+    out = backup_log(db, None)
+    assert out.parent == tmp_path / "backups" and Store(out).count() == 1
+    monkeypatch.setattr("builtins.input", lambda _: "no")
+    with pytest.raises(SystemExit):
+        reset_log(db)
+    assert Store(db).count() == 1
+    monkeypatch.setattr("builtins.input", lambda _: "yes")
+    reset_log(db)
+    assert Store(db).count() == 0
+    assert len(list((tmp_path / "backups").glob("mynode-*.db"))) >= 1
+    with pytest.raises(SystemExit, match="--db"):
+        backup_log(tmp_path / "nope.db", None)

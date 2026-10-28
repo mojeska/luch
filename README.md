@@ -173,6 +173,18 @@ Host radio-host
   ExitOnForwardFailure yes    # quit if the forward can't be set up
 ```
 
+## Backup and reset
+
+```sh
+.venv/bin/luch backup                  # writes ~/.local/share/luch/backups/<radio>-<date>.db
+.venv/bin/luch backup ~/Desktop        # or a folder or file of your choice
+.venv/bin/luch reset                   # deletes every logged message, tag and remembered contact
+```
+
+Both work while the logger runs and pick the running logger's log; `--radio NAME` or `--db PATH` picks another. `reset` asks you to type `yes` (`--yes` skips that) and always saves a backup first. Contacts stored on the radio aren't touched and reappear on the next connect. Restart open `luch` screens after a reset, and reset the copy on any other computer you read on separately.
+
+To restore, stop the logger (`luch service stop`), delete `<radio>.db` and its `-wal` and `-shm` files, copy the backup in as `<radio>.db`, and start the logger again.
+
 ## Keys and commands
 
 | | |
