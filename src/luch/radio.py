@@ -79,6 +79,16 @@ def state_from_dict(d: dict) -> RadioState:
     return RadioState(**d)
 
 
+HEARTBEAT_SECS = 20     # how often a connected radio is asked for its battery level
+HEARTBEAT_MISSES = 2    # unanswered reads in a row before the link counts as lost
+TAKEOVER_SECS = 90      # a Wi-Fi link lost sooner than this after connecting was probably taken
+RETRY_SECS = 2          # pause before reconnecting after a lost link
+
+
+class LinkSilent(Exception):
+    """The radio stopped answering on a link that still looks open."""
+
+
 USB_PATTERNS = ["/dev/cu.usbserial*", "/dev/cu.SLAB_USBtoUART*", "/dev/cu.wchusbserial*",
                 "/dev/cu.usbmodem*", "/dev/ttyUSB*", "/dev/ttyACM*"]
 
@@ -152,10 +162,29 @@ class Radio:
         self._lost = asyncio.Event()
         self.max_channels = 8
         self._stop = False
+        self._wake = asyncio.Event()
+        # A screen gives the radio up when another Wi-Fi client keeps taking it (until /reconnect);
+        # the logger, with nobody watching, keeps trying with a growing pause.
+        self.yield_on_takeover = False
+        self.taken = False
 
     # ---------------------------------------------------------------- connection loop
+    async def _pause(self, seconds: float | None) -> None:
+        """Sleep before the next try; /reconnect (or stop) ends it early. None waits for /reconnect."""
+        self._wake.clear()
+        try:
+            await asyncio.wait_for(self._wake.wait(), seconds)
+        except asyncio.TimeoutError:
+            pass
+
+    def reconnect(self) -> None:
+        """Try the radio again now, even after giving it up to another client."""
+        self.taken = False
+        self._wake.set()
+
     async def run(self) -> None:
         delay = 2
+        short = 0  # Wi-Fi sessions in a row that ended within TAKEOVER_SECS
         while not self._stop:
             try:
                 if self.tcp:
@@ -180,13 +209,16 @@ class Radio:
                 self.mc = None
             if self.mc is None:
                 self.notify("status", f"NO CONTACT · RETRY IN {delay}s")
-                await asyncio.sleep(delay)
+                await self._pause(delay)
                 delay = min(delay * 2, 60)
                 continue
             delay = 2
             self._lost.clear()
+            began = time.monotonic()
             try:
                 await self._session()
+            except LinkSilent as e:
+                self.notify("status", str(e))
             except Exception as e:
                 log.exception("session error")
                 self.notify("status", f"FAULT: {e}")
@@ -198,12 +230,27 @@ class Radio:
                 except Exception:
                     pass
             self.mc = None
-            if not self._stop:
-                await asyncio.sleep(2)
+            if self._stop:
+                break
+            # The radio's Wi-Fi serves one client and the newest wins, so links that keep dropping
+            # straight after connecting mean something else (a logger, the phone app) wants it too.
+            short = short + 1 if self.tcp and time.monotonic() - began < TAKEOVER_SECS else 0
+            if short < 2:
+                await self._pause(RETRY_SECS)
+            elif self.yield_on_takeover:
+                self.taken = True
+                self.notify("status", "RADIO TAKEN BY ANOTHER WI-FI CLIENT · /reconnect TO TAKE IT BACK")
+                await self._pause(None)
+                short = 0
+            else:
+                wait = min(30 * 2 ** (short - 2), 600)
+                self.notify("status", f"RADIO TAKEN BY ANOTHER WI-FI CLIENT · RETRY IN {wait}s")
+                await self._pause(wait)
 
     async def stop(self) -> None:
         self._stop = True
         self._lost.set()
+        self._wake.set()
         if self.mc:
             try:
                 await self.mc.disconnect()
@@ -235,7 +282,8 @@ class Radio:
         s.channels = await self._load_channels(self.max_channels)
         for ch in s.channels:
             self.store.set_title(ch.conv, ch.name)
-        await self._load_contacts()
+        if not await self._load_contacts():
+            raise LinkSilent("NO REPLY FROM RADIO (CONTACTS)")
 
         subs = [
             mc.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_msg),
@@ -253,11 +301,19 @@ class Radio:
         await mc.start_auto_message_fetching()
 
         try:
+            missed, tick = 0, 0
             while not self._lost.is_set():
-                await self._poll_battery()
-                await self._poll_position()
+                # A radio that has switched to another client may leave this link open but silent,
+                # so a battery read doubles as a heartbeat.
+                missed = 0 if await self._poll_battery() else missed + 1
+                if missed >= HEARTBEAT_MISSES:
+                    self.notify("status", "NO REPLY FROM RADIO")
+                    break
+                if tick % (60 // HEARTBEAT_SECS) == 0:
+                    await self._poll_position()
+                tick += 1
                 try:
-                    await asyncio.wait_for(self._lost.wait(), timeout=60)
+                    await asyncio.wait_for(self._lost.wait(), timeout=HEARTBEAT_SECS)
                 except asyncio.TimeoutError:
                     pass
         finally:
@@ -289,9 +345,12 @@ class Radio:
                 out.append(Channel(idx, name))
         return out
 
-    async def _load_contacts(self) -> None:
+    async def _load_contacts(self) -> bool:
+        """Refresh the contact list from the radio; False if it went quiet partway."""
         assert self.mc
-        await self.mc.commands.get_contacts()
+        ev = await self.mc.commands.get_contacts()
+        if ev.type == EventType.ERROR and any(w in str(ev.payload).lower() for w in ("timeout", "no event")):
+            return False
         contacts = []
         for c in self.mc.contacts.values():
             contacts.append(Contact(
@@ -301,13 +360,19 @@ class Radio:
             self.store.set_title(f"dm:{c['public_key'][:12]}", c.get("adv_name") or c["public_key"][:12])
         contacts.sort(key=lambda c: c.name.lower())
         self.state.contacts = contacts
+        return True
 
-    async def _poll_battery(self) -> None:
+    async def _poll_battery(self) -> bool:
+        """Read the battery; False if the radio didn't answer."""
         assert self.mc
         ev = await self.mc.commands.get_bat()
-        if ev.type == EventType.BATTERY:
-            self.state.battery_mv = ev.payload.get("level", 0)
+        if ev.type != EventType.BATTERY:
+            return False
+        level = ev.payload.get("level", 0)
+        if level != self.state.battery_mv:
+            self.state.battery_mv = level
             self.notify("state", self.state)
+        return True
 
     async def _poll_position(self) -> None:
         """Live GPS fix from the radio's own telemetry (only radios with GPS turned on)."""

@@ -18,6 +18,7 @@ EN = {
     "НЕ ЗАДАН": "NOT SET",
     "УЗЕЛ ПЕРЕИМЕНОВАН": "NODE RENAMED",
     "ПЕРЕЗАГРУЗКА": "REBOOTING",
+    "ПЕРЕПОДКЛЮЧЕНИЕ": "RECONNECTING",
     "ПЕРЕМ. ОБЛАЧН.": "PARTLY CLOUDY",
     "ЛЕДЯНАЯ МОРОСЬ": "FREEZING DRIZZLE",
     "ЛЕДЯНОЙ ДОЖДЬ": "FREEZING RAIN",

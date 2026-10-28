@@ -68,6 +68,7 @@ HELP = [
     "  /cli <command>      run a radio CLI command, e.g. /cli get wifi.ip",
     "  /name <new name>    rename this node and announce it (Bluetooth name changes after /reboot)",
     "  /reboot             restart the radio (LUCH reconnects)",
+    "  /reconnect          connect to the radio again now (e.g. after another client took it)",
     "  /help               this list",
     "  Tab / Shift+Tab     move between panels",
     "  Ctrl+N / Ctrl+P     next / previous conversation",
@@ -156,6 +157,7 @@ class LuchApp(App):
                                      mirror=self.store if mirror_path else None)
         else:
             self.radio = Radio(device, self.store, self.on_radio, port=port, tcp=tcp, pin=pin)
+            self.radio.yield_on_takeover = True  # don't fight a logger or phone for the Wi-Fi link
         self.offline = offline
         self.state = RadioState()
         self.current: str | None = None
@@ -785,6 +787,7 @@ class LuchApp(App):
         handler = {"/home": self.cmd_home, "/gps": self.cmd_gps, "/weather": self.cmd_weather,
                    "/units": self.cmd_units, "/cli": self.cmd_cli,
                    "/name": self.cmd_name, "/reboot": self.cmd_reboot,
+                   "/reconnect": self.cmd_reconnect,
                    "/join": self.cmd_join, "/leave": self.cmd_leave, "/fav": self.cmd_fav,
                    "/unfav": self.cmd_unfav, "/tag": self.cmd_tag, "/untag": self.cmd_untag,
                    "/tags": self.cmd_tags}.get(cmd)
@@ -945,6 +948,13 @@ class LuchApp(App):
         await self.radio.set_name(rest)
         self.event("УЗЕЛ ПЕРЕИМЕНОВАН ", free=f"{old} → {rest}")
         self.note(f"── {old} → {rest} · announced to the mesh; Bluetooth name MeshCore-{rest} after /reboot ──")
+
+    async def cmd_reconnect(self, rest: str) -> None:
+        if self.via_logger:
+            self.event("ЧЕРЕЗ ЛОГГЕР ", free="(the logger keeps the link; nothing to reconnect)")
+            return
+        self.event("ПЕРЕПОДКЛЮЧЕНИЕ")
+        self.radio.reconnect()
 
     async def cmd_reboot(self, rest: str) -> None:
         self.event("ПЕРЕЗАГРУЗКА")
