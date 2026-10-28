@@ -3,9 +3,13 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from luch.daemon import Daemon
+import pytest
+
+from luch.daemon import UNIX_SOCKETS, Daemon
 from luch.radio import Channel, RadioState
 from luch.remote import RemoteRadio
+
+pytestmark = pytest.mark.skipif(not UNIX_SOCKETS, reason="the logger needs Unix sockets (not on Windows yet)")
 
 
 async def test_logger_serves_state_messages_and_sends():

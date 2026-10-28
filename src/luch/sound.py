@@ -177,12 +177,34 @@ def render_anthem(path: Path) -> None:
 def _player() -> list[str] | None:
     if os.environ.get("LUCH_SOUND", "").lower() in ("0", "off", "no"):
         return None
+    if sys.platform == "win32":
+        return ["winsound"]  # built into Python on Windows; played in-process, see _WinSound
     if sys.platform == "darwin" and shutil.which("afplay"):
         return ["afplay"]
     for cmd in (["paplay"], ["pw-play"], ["aplay", "-q"]):
         if shutil.which(cmd[0]):
             return cmd
     return None
+
+
+class _WinSound:
+    """A sound playing through winsound, with the poll()/terminate() of a player process.
+    winsound plays one sound at a time, so a new one cuts off the last."""
+
+    def __init__(self, path: Path):
+        import wave
+        import winsound
+        with wave.open(str(path)) as w:
+            self.ends = time.monotonic() + w.getnframes() / w.getframerate()
+        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+
+    def poll(self) -> int | None:
+        return None if time.monotonic() < self.ends else 0
+
+    def terminate(self) -> None:
+        import winsound
+        winsound.PlaySound(None, winsound.SND_PURGE)
+        self.ends = 0
 
 
 class Sound:
@@ -192,7 +214,7 @@ class Sound:
         self.dir = cache_dir / "sounds"
         self.muted = muted
         self.player = _player()
-        self._anthem: subprocess.Popen | None = None
+        self._anthem: subprocess.Popen | _WinSound | None = None
         self._last = 0.0
 
     @property
@@ -208,15 +230,19 @@ class Sound:
             tmp.replace(path)
         return path
 
-    def _play(self, path: Path) -> subprocess.Popen | None:
+    def _play(self, path: Path) -> subprocess.Popen | _WinSound | None:
         if not self.player:
             return None
+        if self.player == ["winsound"]:
+            return _WinSound(path)
         return subprocess.Popen(self.player + [str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def effect(self, name: str) -> None:
         """Play an effect unless muted; at most one every 0.4 s so a burst of messages doesn't chatter."""
         now = time.monotonic()
         if self.muted or not self.player or now - self._last < 0.4:
+            return
+        if self.player == ["winsound"] and self.anthem_playing():
             return
         self._last = now
         self._play(self._file(name))

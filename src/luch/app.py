@@ -22,7 +22,7 @@ from textual.markup import escape as escape_markup
 from textual.widgets import Button, Input, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 
-from .daemon import default_socket_path, run_daemon, socket_alive
+from .daemon import UNIX_SOCKETS, default_socket_path, run_daemon, socket_alive
 from .radio import CONTACT_REPEATER, CONTACT_ROOM, CONTACT_SENSOR, Radio, RadioState
 from .remote import RemoteRadio, logger_host
 from . import firmware, service
@@ -370,7 +370,7 @@ class LuchApp(App):
         if self._count > 0 or self.sound.anthem_playing():
             return
         if not self.sound.available:
-            self.event("НЕТ ЗВУКА ", free="(no afplay / paplay / aplay)")
+            self.event("НЕТ ЗВУКА ", free="(no afplay / paplay / aplay / winsound)")
             return
         self.event("ПУСК ", free=f"T-{self.countdown_seconds}")
         self._count = self.countdown_seconds
@@ -1216,6 +1216,9 @@ def main() -> None:
     args.db.parent.mkdir(parents=True, exist_ok=True)
     device = args.device or DEFAULT_DEVICE
 
+    if args.cmd in ("logger", "service") and not UNIX_SOCKETS:
+        raise SystemExit("the background logger doesn't run on Windows yet; "
+                         "run plain `luch` to talk to the radio directly")
     if args.cmd == "logger":
         run_daemon(device, args.db, args.port, args.tcp, args.pin)
         return

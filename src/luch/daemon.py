@@ -20,6 +20,7 @@ import logging
 import os
 import signal
 import socket
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ from .radio import Radio, state_to_dict
 from .store import Store
 
 log = logging.getLogger("luch.daemon")
+# Python's asyncio has no Unix sockets on Windows, so the logger isn't available there yet.
+UNIX_SOCKETS = sys.platform != "win32"
 
 CALLABLE = {"join_channel", "leave_channel", "set_favourite", "set_gps", "cli", "reboot", "set_name"}  # radio methods screens may call
 
@@ -136,6 +139,8 @@ class Daemon:
 
 
 async def socket_alive(path: Path) -> bool:
+    if not UNIX_SOCKETS:
+        return False
     try:
         _, w = await asyncio.wait_for(asyncio.open_unix_connection(str(path)), 1)
     except (OSError, asyncio.TimeoutError):

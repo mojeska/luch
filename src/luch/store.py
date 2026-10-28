@@ -1,7 +1,9 @@
 """SQLite log of every message LUCH sends or receives."""
 from __future__ import annotations
 
+import os
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +57,9 @@ class Message:
 
 
 def default_db_path() -> Path:
+    """~/.local/share/luch/luch.db, or %LOCALAPPDATA%\\luch\\luch.db on Windows."""
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "luch" / "luch.db"
     return Path.home() / ".local" / "share" / "luch" / "luch.db"
 
 

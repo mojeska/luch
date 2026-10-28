@@ -113,6 +113,20 @@ bluetoothctl
 
 On Debian / Ubuntu the serial group is `dialout` instead of `uucp`.
 
+## Windows (untested with a radio)
+
+LUCH runs on Windows 10 and 11 in [Windows Terminal](https://aka.ms/terminal), talking to the radio directly over Bluetooth, USB or Wi-Fi. The background logger (`luch logger`, `luch service`) isn't available on Windows yet. The automated tests run on Windows, but nobody has tried it with a radio yet.
+
+```powershell
+git clone https://github.com/mojeska/luch.git; cd luch
+py -m venv .venv; .venv\Scripts\pip install -e .
+.venv\Scripts\luch --tcp 192.168.1.50      # or: --port auto (finds the COM port), or -d MeshCore-MyNode
+```
+
+- **Bluetooth:** pair the radio first in Settings → Bluetooth & devices, with the PIN on its screen. `--pin` is Linux-only.
+- **Log:** `%LOCALAPPDATA%\luch\<radio>.db`.
+- **Sound** plays through Windows itself, one sound at a time.
+
 ## Several radios
 
 Each radio gets its own log, `~/.local/share/luch/<radio>.db`, named from `-d` (`MeshCore-MyNode` → `mynode`) or set with `--radio`. Use the same `--radio` name whichever way you connect to a radio, so Bluetooth and Wi-Fi sessions share one log. Plain `luch` connects to the running logger.

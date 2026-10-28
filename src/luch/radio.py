@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import glob
 import logging
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
@@ -82,8 +83,17 @@ USB_PATTERNS = ["/dev/cu.usbserial*", "/dev/cu.SLAB_USBtoUART*", "/dev/cu.wchusb
                 "/dev/cu.usbmodem*", "/dev/ttyUSB*", "/dev/ttyACM*"]
 
 
+# USB-serial chips on MeshCore boards: Silicon Labs CP210x, WCH CH34x, FTDI, Espressif and Nordic USB.
+USB_VIDS = {0x10C4, 0x1A86, 0x0403, 0x303A, 0x239A, 0x1915}
+
+
 def find_usb_port() -> str | None:
     """First USB serial port that looks like a radio (Heltec V3 uses a CP2102)."""
+    if sys.platform == "win32":  # COM ports have no telling names, so go by the USB chip
+        from serial.tools import list_ports
+        ports = sorted(list_ports.comports(), key=lambda p: p.device)
+        hit = next((p for p in ports if p.vid in USB_VIDS), None) or next((p for p in ports if p.vid), None)
+        return hit.device if hit else None
     for pat in USB_PATTERNS:
         ports = sorted(glob.glob(pat))
         if ports:
