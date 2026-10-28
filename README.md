@@ -113,9 +113,9 @@ bluetoothctl
 
 On Debian / Ubuntu the serial group is `dialout` instead of `uucp`.
 
-## Windows (untested with a radio)
+## Windows
 
-LUCH runs on Windows 10 and 11 in [Windows Terminal](https://aka.ms/terminal), talking to the radio directly over Bluetooth, USB or Wi-Fi. The background logger (`luch logger`, `luch service`) isn't available on Windows yet. The automated tests run on Windows, but nobody has tried it with a radio yet.
+LUCH runs on Windows 10 and 11 in [Windows Terminal](https://aka.ms/terminal), talking to the radio directly over Bluetooth, USB or Wi-Fi. The background logger (`luch logger`, `luch service`) isn't available on Windows yet. Tested on Windows 11 over Wi-Fi; USB and Bluetooth on Windows are untested so far.
 
 ```powershell
 git clone https://github.com/mojeska/luch.git; cd luch
