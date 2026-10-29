@@ -29,7 +29,7 @@ class FakeCommands:
         contact["flags"] = flags
         return SimpleNamespace(type=EventType.OK, payload={})
 
-    async def get_contacts(self):
+    async def get_contacts(self, timeout=5):
         return SimpleNamespace(type=EventType.CONTACTS, payload={})
 
 

@@ -33,7 +33,8 @@ class FakeMC:
             async def get_channel(self, idx):
                 return ev(EventType.CHANNEL_INFO, channel_name="Public")
 
-            async def get_contacts(self):
+            async def get_contacts(self, timeout=5):
+                mc.contacts_timeout = timeout
                 if contacts_time_out:
                     return ev(EventType.ERROR, reason="timeout waiting for contacts")
                 return ev(EventType.CONTACTS)
@@ -98,6 +99,19 @@ async def test_a_silent_link_counts_as_lost(monkeypatch):
     task.cancel()
 
 
+async def test_contacts_get_time_for_a_slow_bluetooth_list(monkeypatch):
+    # MeshCore's timeout covers the whole list; 350 contacts take about 20 s over Bluetooth.
+    fake = FakeMC()
+    fast(monkeypatch, [fake])
+    statuses = []
+    r = Radio("x", Store(":memory:"), lambda k, d: statuses.append(d) if k == "status" else None, tcp="radio")
+    task = asyncio.create_task(r.run())
+    await wait_for(lambda: "LINK ESTABLISHED" in statuses)
+    assert fake.contacts_timeout >= 30
+    await r.stop()
+    task.cancel()
+
+
 async def test_contacts_that_never_arrive_drop_the_link(monkeypatch):
     fast(monkeypatch, [FakeMC(contacts_time_out=True)])
     statuses = []
@@ -135,3 +149,34 @@ async def test_the_logger_backs_off_instead(monkeypatch):
     assert not r.taken
     await r.stop()
     await asyncio.wait_for(task, 1)  # stop() also ends the back-off pause
+
+
+class SilentSerialMC:
+    """A radio on USB that never answers; records when each port open happens."""
+    opens = []
+
+    def __init__(self, cx, **kw):
+        self.cx = cx
+
+    async def connect(self):
+        SilentSerialMC.opens.append((self.cx.dtr, asyncio.get_running_loop().time()))
+        return None
+
+    async def disconnect(self):
+        pass
+
+
+async def test_usb_tries_both_dtr_settings_with_a_pause(monkeypatch):
+    # Windows refuses to reopen a COM port the moment it's closed ("Access is denied").
+    SilentSerialMC.opens = []
+    monkeypatch.setattr(radio_mod, "MeshCore", SilentSerialMC)
+    monkeypatch.setattr(radio_mod, "SERIAL_REOPEN_SECS", 0.05)
+    try:
+        await radio_mod.open_serial("COM6")
+    except RuntimeError as e:
+        assert "NO REPLY" in str(e)
+    else:
+        raise AssertionError("a silent radio should raise")
+    (dtr1, t1), (dtr2, t2) = SilentSerialMC.opens
+    assert (dtr1, dtr2) == (True, False)
+    assert t2 - t1 >= 0.05

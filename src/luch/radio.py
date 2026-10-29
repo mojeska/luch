@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from meshcore import EventType, MeshCore
+from meshcore.serial_cx import SerialConnection
 
 from .blepair import LINUX, pin_agent
 from .store import Store
@@ -83,6 +84,9 @@ HEARTBEAT_SECS = 20     # how often a connected radio is asked for its battery l
 HEARTBEAT_MISSES = 2    # unanswered reads in a row before the link counts as lost
 TAKEOVER_SECS = 90      # a Wi-Fi link lost sooner than this after connecting was probably taken
 RETRY_SECS = 2          # pause before reconnecting after a lost link
+# MeshCore's get_contacts timeout covers the whole list, not each contact: 350 contacts take
+# under a second over Wi-Fi but about 20 s over Bluetooth, so its 5 s default always fails there.
+CONTACTS_SECS = 60
 
 
 class LinkSilent(Exception):
@@ -109,6 +113,25 @@ def find_usb_port() -> str | None:
         if ports:
             return ports[0]
     return None
+
+
+SERIAL_REOPEN_SECS = 1.0
+
+
+async def open_serial(port: str) -> MeshCore:
+    """Connect over USB, trying DTR on and then off as MeshCore.create_serial does.
+
+    create_serial reopens the port straight after closing it, and Windows hasn't let go
+    of a COM port that soon, so a radio that doesn't answer shows up as "Access is denied".
+    """
+    for dtr in (True, False):
+        cx = SerialConnection(port, 115200, cx_dly=0.1, rts=False, dtr=dtr)
+        mc = MeshCore(cx, default_timeout=10, only_error=True)
+        if await mc.connect() is not None:
+            return mc
+        await mc.disconnect()
+        await asyncio.sleep(SERIAL_REOPEN_SECS)
+    raise RuntimeError(f"NO REPLY FROM RADIO ON {port}")
 
 
 def parse_secret(text: str) -> bytes:
@@ -196,7 +219,7 @@ class Radio:
                     if not port:
                         raise RuntimeError("NO USB RADIO FOUND")
                     self.notify("status", f"USB {port}")
-                    self.mc = await MeshCore.create_serial(port, 115200, default_timeout=10, only_error=True)
+                    self.mc = await open_serial(port)
                 else:
                     self.notify("status", f"SCANNING FOR {self.device}")
                     pin = self.pin if LINUX else None
@@ -348,7 +371,7 @@ class Radio:
     async def _load_contacts(self) -> bool:
         """Refresh the contact list from the radio; False if it went quiet partway."""
         assert self.mc
-        ev = await self.mc.commands.get_contacts()
+        ev = await self.mc.commands.get_contacts(timeout=CONTACTS_SECS)
         if ev.type == EventType.ERROR and any(w in str(ev.payload).lower() for w in ("timeout", "no event")):
             return False
         contacts = []

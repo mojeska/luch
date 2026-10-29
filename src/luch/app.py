@@ -1118,7 +1118,7 @@ async def wifi_setup(args) -> None:
         pass
     await radio.stop()
     task.cancel()
-    print("when it's back, `luch /cli get wifi.ip` or check your router; then connect with --tcp <ip>")
+    print("when it's back, run /cli get wifi.ip in LUCH or check your router; then connect with --tcp <ip>")
 
 
 def existing_log(db: Path) -> Path:

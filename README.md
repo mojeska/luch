@@ -115,7 +115,7 @@ On Debian / Ubuntu the serial group is `dialout` instead of `uucp`.
 
 ## Windows
 
-LUCH runs on Windows 10 and 11 in [Windows Terminal](https://aka.ms/terminal), over Bluetooth, USB or Wi-Fi, with the background logger as a Task Scheduler task (see [Background logger](#background-logger)). Tested on Windows 11 over Wi-Fi; USB and Bluetooth on Windows are untested so far.
+LUCH runs on Windows 10 and 11 in [Windows Terminal](https://aka.ms/terminal), over Bluetooth, USB or Wi-Fi, with the background logger as a Task Scheduler task (see [Background logger](#background-logger)). Tested on Windows 11 over Wi-Fi, Bluetooth and USB.
 
 ```powershell
 git clone https://github.com/mojeska/luch.git; cd luch
@@ -123,7 +123,8 @@ py -m venv .venv; .venv\Scripts\pip install -e .
 .venv\Scripts\luch --tcp 192.168.1.50      # or: --port auto (finds the COM port), or -d MeshCore-MyNode
 ```
 
-- **Bluetooth:** pair the radio first in Settings → Bluetooth & devices, with the PIN on its screen. `--pin` is Linux-only.
+- **Bluetooth:** pair the radio first in Settings → Bluetooth & devices, with the PIN on its screen. If it isn't listed, set Bluetooth devices discovery to *Advanced* under Settings → Bluetooth & devices → Devices. `--pin` is Linux-only.
+- **USB:** boards with a Silicon Labs CP210x chip (Heltec V3 and others) need its driver before a COM port appears: Device Manager → the device with the warning icon → Update driver → Search automatically, or the CP210x Universal Windows Driver from silabs.com.
 - **Log:** `%LOCALAPPDATA%\luch\<radio>.db`.
 - **Sound** plays through Windows itself, one sound at a time.
 
@@ -145,7 +146,7 @@ Find its address with `/cli get wifi.ip` in LUCH (or your router; a DHCP reserva
 .venv/bin/luch service install --radio mynode --tcp 192.168.1.50
 ```
 
-The phone and the logger can then be connected at once. Messages the radio queued while nobody was connected go to whichever client asks first.
+The phone and the logger can then be connected at once, but the radio seems to answer one app at a time: in testing, while the logger was on Wi-Fi, LUCH over Bluetooth connected but never got the contact list. Messages the radio queued while nobody was connected go to whichever client asks first.
 
 ## GPS and weather
 
