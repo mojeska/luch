@@ -168,6 +168,12 @@ On macOS it runs as a launchd agent, on Linux as a systemd user service, on Wind
 
 Logger output: `~/.local/share/luch/logger.log` on macOS, `journalctl --user -u luch -f` on Linux, `%LOCALAPPDATA%\luch\logger.log` on Windows. On Windows, screens reach the logger on a local port with a key kept in `%LOCALAPPDATA%\luch\<radio>.sock` (Python has no Unix sockets there), so the [From another computer](#from-another-computer) ssh setup is macOS and Linux only. To keep the Linux service running while logged out: `loginctl enable-linger $USER`.
 
+**Alert when the link is lost.** Put a ping URL, for example from a [healthchecks.io](https://healthchecks.io) check with a 5-minute period, in `~/.local/share/luch/<radio>.heartbeat`. The logger fetches it every 5 minutes while the radio answers, so when the radio goes quiet the pings stop and the check alerts you. It reads the file each time; no restart is needed.
+
+```sh
+echo 'https://hc-ping.com/<uuid>' > ~/.local/share/luch/mynode.heartbeat && chmod 600 ~/.local/share/luch/mynode.heartbeat
+```
+
 ### From another computer
 
 The logger can run on the machine the radio is attached to, with the screen on a different one. Forward the logger's socket over ssh, from the computer you'll read on:

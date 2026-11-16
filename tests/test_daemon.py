@@ -191,3 +191,28 @@ async def test_localhost_logger_wants_the_key(monkeypatch, transport):
         assert not await daemon_mod.socket_alive(daemon.sock_path)
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_heartbeat_pings_only_while_connected(monkeypatch):
+    d = tmpdir()
+    try:
+        daemon = Daemon("fake", d / "luch.db")
+        pinged = []
+        monkeypatch.setattr(daemon_mod, "HEARTBEAT_PING_SECS", 0.01)
+        monkeypatch.setattr(daemon_mod, "ping", pinged.append)
+        task = asyncio.create_task(daemon.heartbeat())
+        daemon.radio.state = RadioState(connected=True)
+        await asyncio.sleep(0.05)
+        assert pinged == []  # no <radio>.heartbeat file yet
+        (d / "luch.heartbeat").write_text("https://hc-ping.com/test\n")
+        await asyncio.sleep(0.05)
+        assert pinged and set(pinged) == {"https://hc-ping.com/test"}
+        daemon.radio.state = RadioState(connected=False)
+        await asyncio.sleep(0.03)
+        n = len(pinged)
+        await asyncio.sleep(0.05)
+        assert len(pinged) == n  # link lost: the pings stop
+        task.cancel()
+        daemon.store.close()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)

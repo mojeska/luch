@@ -16,6 +16,9 @@ Transport: a Unix socket at <radio>.sock (mode 0600) on macOS and Linux. Python'
 Unix sockets on Windows, so there the logger listens on 127.0.0.1 at a random port and <radio>.sock
 is a small file holding {"port": n, "key": "..."}; a client's first line is {"op": "auth", "key": ...}.
 The file sits in the user's own %LOCALAPPDATA%, so only they can read the key.
+
+Heartbeat: if <radio>.heartbeat holds a URL (e.g. a healthchecks.io ping URL), the logger fetches
+it every HEARTBEAT_PING_SECS while the radio answers, so the pings stopping means the link is lost.
 """
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ import secrets
 import signal
 import socket
 import sys
+import urllib.request
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -38,6 +42,8 @@ from .store import Store
 log = logging.getLogger("luch.daemon")
 UNIX_SOCKETS = sys.platform != "win32"  # see Transport above
 
+HEARTBEAT_PING_SECS = 300
+
 CALLABLE = {"join_channel", "leave_channel", "set_favourite", "set_gps", "cli", "reboot", "set_name"}  # radio methods screens may call
 
 
@@ -45,11 +51,25 @@ def default_socket_path(db_path: Path) -> Path:
     return db_path.with_suffix(".sock")
 
 
+def heartbeat_url(db_path: Path) -> str:
+    """The URL in <radio>.heartbeat, or "" when there's no such file."""
+    try:
+        return db_path.with_suffix(".heartbeat").read_text().strip()
+    except OSError:
+        return ""
+
+
+def ping(url: str) -> None:
+    with urllib.request.urlopen(url, timeout=10) as r:
+        r.read()
+
+
 class Daemon:
     def __init__(self, device: str, db_path: Path, port: str | None = None, tcp: str | None = None,
                  pin: str | None = None):
         self.store = Store(db_path)
         self.sock_path = default_socket_path(db_path)
+        self.db_path = db_path
         self.radio = Radio(device, self.store, self.notify, port=port, tcp=tcp, pin=pin)
         self.clients: set[asyncio.StreamWriter] = set()
         self.last_status = "STARTING"
@@ -84,6 +104,23 @@ class Daemon:
                 w.write(line)
             except Exception:
                 self.clients.discard(w)
+
+    async def heartbeat(self) -> None:
+        """Ping the heartbeat URL while the radio answers (re-read each time, so no restart is needed)."""
+        failing = False
+        while True:
+            url = heartbeat_url(self.db_path)
+            if url and self.radio.state.connected:
+                try:
+                    await asyncio.to_thread(ping, url)
+                    if failing:
+                        log.info("heartbeat ping works again")
+                    failing = False
+                except Exception as e:
+                    if not failing:
+                        log.warning("heartbeat ping failed: %s", e)
+                    failing = True
+            await asyncio.sleep(HEARTBEAT_PING_SECS)
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         if self.key:  # localhost TCP: anyone on this PC can connect, so ask for the key first
@@ -158,6 +195,7 @@ class Daemon:
             except (NotImplementedError, AttributeError, ValueError):
                 pass  # Windows: Ctrl+C cancels the run instead, and the finally below still cleans up
         radio_task = asyncio.create_task(self.radio.run())
+        heartbeat_task = asyncio.create_task(self.heartbeat())
         log.info("logger up, socket %s", self.sock_path)
         try:
             await self._stop.wait()
@@ -165,6 +203,7 @@ class Daemon:
             log.info("logger stopping")
             await self.radio.stop()
             radio_task.cancel()
+            heartbeat_task.cancel()
             server.close()
             self.sock_path.unlink(missing_ok=True)
             self.store.close()
